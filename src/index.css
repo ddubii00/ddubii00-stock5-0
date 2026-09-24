@@ -44,6 +44,48 @@ html, body {
   flex-wrap: nowrap;
 }
 
+.index-view-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.index-view-control select {
+  min-width: 170px;
+  padding: 7px 28px 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.view-count { color: var(--muted); }
+.chart-page-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 34px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel2);
+  color: var(--muted);
+  font-size: 12px;
+}
+.chart-page-controls { display: flex; align-items: center; gap: 8px; }
+.chart-page-controls button {
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+}
+.chart-page-controls button:disabled { opacity: .45; cursor: default; }
+
 .market-summary {
   display: flex;
   align-items: baseline;

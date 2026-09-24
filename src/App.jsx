@@ -1,16 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import ChartColumn from './components/ChartColumn';
 import { apiUrl } from './api';
+import { GROUPS, INDEX_ITEMS } from './marketPresets';
 import './index.css';
 
-// 7. 4개 차트 세트 (2×2 그리드)
-// 1. 마지막 선택 종목 기억 → localStorage 키를 각 컬럼마다 부여
-const COLUMNS = [
-  { id: 'col-1', defaultSymbol: '000660.KS', defaultName: 'SK하이닉스' },
-  { id: 'col-2', defaultSymbol: '005930.KS', defaultName: '삼성전자' },
-  { id: 'col-3', defaultSymbol: '^GSPC',     defaultName: 'S&P 500' },
-  { id: 'col-4', defaultSymbol: '^KS11',     defaultName: 'KOSPI 종합' },
-];
+const PAGE_SIZE = 4;
 
 function formatFixed(value, digits = 2) {
   const n = Number(value);
@@ -65,8 +59,23 @@ function isUsOpen() {
 }
 
 function App() {
+  const [view, setView] = useState('index');
+  const [page, setPage] = useState(0);
   const [marketSummary, setMarketSummary] = useState({ kospi: null, kosdaq: null, nasdaq: null, sp500: null, usdKrw: null });
   const [showBollinger, setShowBollinger] = useState(false);
+
+  useEffect(() => {
+    document.title = 'stock5-0 지수정보';
+  }, []);
+
+  const selectedItems = view === 'index' ? INDEX_ITEMS : GROUPS[view].items;
+  const pageCount = Math.ceil(selectedItems.length / PAGE_SIZE);
+  const visibleColumns = selectedItems.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+
+  const handleViewChange = (event) => {
+    setView(event.target.value);
+    setPage(0);
+  };
 
   const fetchQuote = useCallback(async (symbol, signal) => {
     const response = await fetch(apiUrl(`/quote?symbol=${encodeURIComponent(symbol)}`), { signal });
@@ -122,6 +131,17 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
+        <div className="index-view-control">
+          <label htmlFor="index-view">차트 보기</label>
+          <select id="index-view" value={view} onChange={handleViewChange}>
+            <option value="index">1. 지수</option>
+            <option value="kospi100">2. KOSPI100</option>
+            <option value="kosdaq100">3. KOSDAQ100</option>
+            <option value="nasdaq100">4. NASDAQ100</option>
+            <option value="nikkei50">5. 니케이 Top 50</option>
+          </select>
+          {view !== 'index' && <span className="view-count">{selectedItems.length}종목</span>}
+        </div>
         <div className="market-summary" aria-label="시장 요약">
           {marketSummary.usdKrw && (
             <span className={`market-item ${marketSummary.usdKrw.change >= 0 ? 'up' : 'down'}`}>
@@ -184,13 +204,23 @@ function App() {
           BB
         </button>
       </header>
+      <div className="chart-page-bar">
+        <span>{view === 'index' ? '주요 지수' : GROUPS[view].label} · {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, selectedItems.length)}</span>
+        {pageCount > 1 && (
+          <div className="chart-page-controls">
+            <button type="button" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>이전</button>
+            <span>{page + 1} / {pageCount}</span>
+            <button type="button" onClick={() => setPage(p => Math.min(pageCount - 1, p + 1))} disabled={page === pageCount - 1}>다음</button>
+          </div>
+        )}
+      </div>
       <div className="dashboard-grid">
-        {COLUMNS.map(col => (
+        {visibleColumns.map((item, index) => (
           <ChartColumn
-            key={col.id}
-            id={col.id}
-            defaultSymbol={col.defaultSymbol}
-            defaultName={col.defaultName}
+            key={`${view}-${item.symbol}`}
+            id={`col-${index + 1}`}
+            defaultSymbol={item.symbol}
+            defaultName={item.name}
             showBollinger={showBollinger}
           />
         ))}
