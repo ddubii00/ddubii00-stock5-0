@@ -70,7 +70,9 @@ function App() {
 
   const selectedItems = view === 'index' ? INDEX_ITEMS : GROUPS[view].items;
   const pageCount = Math.ceil(selectedItems.length / PAGE_SIZE);
-  const visibleColumns = selectedItems.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+  const visibleColumns = view === 'index'
+    ? selectedItems
+    : selectedItems.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
 
   const handleViewChange = (event) => {
     setView(event.target.value);
@@ -131,17 +133,6 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <div className="index-view-control">
-          <label htmlFor="index-view">차트 보기</label>
-          <select id="index-view" value={view} onChange={handleViewChange}>
-            <option value="index">1. 지수</option>
-            <option value="kospi100">2. KOSPI100</option>
-            <option value="kosdaq100">3. KOSDAQ100</option>
-            <option value="nasdaq100">4. NASDAQ100</option>
-            <option value="nikkei50">5. 니케이 Top 50</option>
-          </select>
-          {view !== 'index' && <span className="view-count">{selectedItems.length}종목</span>}
-        </div>
         <div className="market-summary" aria-label="시장 요약">
           {marketSummary.usdKrw && (
             <span className={`market-item ${marketSummary.usdKrw.change >= 0 ? 'up' : 'down'}`}>
@@ -194,6 +185,24 @@ function App() {
             </span>
           )}
         </div>
+        <div className="index-view-control">
+          {view !== 'index' && (
+            <div className="compact-page-controls" aria-label="종목 페이지 이동">
+              <button type="button" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>이전</button>
+              <span>{page + 1}/{pageCount}</span>
+              <button type="button" onClick={() => setPage(p => Math.min(pageCount - 1, p + 1))} disabled={page === pageCount - 1}>다음</button>
+            </div>
+          )}
+          <label htmlFor="index-view">차트 보기</label>
+          <select id="index-view" value={view} onChange={handleViewChange}>
+            <option value="index">1. 지수</option>
+            <option value="kospi100">2. KOSPI100</option>
+            <option value="kosdaq100">3. KOSDAQ100</option>
+            <option value="nasdaq100">4. NASDAQ100</option>
+            <option value="nikkei50">5. 니케이 Top 50</option>
+          </select>
+          {view !== 'index' && <span className="view-count">{selectedItems.length}종목</span>}
+        </div>
         <button
           type="button"
           className={`header-bb-button${showBollinger ? ' active' : ''}`}
@@ -204,16 +213,6 @@ function App() {
           BB
         </button>
       </header>
-      <div className="chart-page-bar">
-        <span>{view === 'index' ? '주요 지수' : GROUPS[view].label} · {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, selectedItems.length)}</span>
-        {pageCount > 1 && (
-          <div className="chart-page-controls">
-            <button type="button" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>이전</button>
-            <span>{page + 1} / {pageCount}</span>
-            <button type="button" onClick={() => setPage(p => Math.min(pageCount - 1, p + 1))} disabled={page === pageCount - 1}>다음</button>
-          </div>
-        )}
-      </div>
       <div className="dashboard-grid">
         {visibleColumns.map((item, index) => (
           <ChartColumn
