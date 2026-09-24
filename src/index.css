@@ -63,17 +63,7 @@ html, body {
   font: inherit;
   cursor: pointer;
 }
-.view-count { color: var(--muted); }
-.compact-page-controls { display: flex; align-items: center; gap: 4px; }
-.compact-page-controls button {
-  padding: 4px 9px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: #fff;
-  color: var(--text);
-  cursor: pointer;
-}
-.compact-page-controls button:disabled { opacity: .45; cursor: default; }
+.lazy-chart-placeholder { min-height: 900px; width: 100%; }
 
 .market-summary {
   display: flex;

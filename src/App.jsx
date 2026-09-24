@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ChartColumn from './components/ChartColumn';
 import { apiUrl } from './api';
 import { GROUPS, INDEX_ITEMS } from './marketPresets';
@@ -61,6 +61,33 @@ function koreanCode(symbol) {
   return String(symbol || '').match(/^(\d{6})\.(KS|KQ)$/)?.[1] || null;
 }
 
+function LazyChartColumn(props) {
+  const holderRef = useRef(null);
+  const [active, setActive] = useState(() => typeof IntersectionObserver === 'undefined');
+
+  useEffect(() => {
+    const element = holderRef.current;
+    if (!element) return undefined;
+    if (typeof IntersectionObserver === 'undefined') return undefined;
+
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry?.isIntersecting) {
+        setActive(true);
+        observer.disconnect();
+      }
+    }, { root: null, rootMargin: '2000px 0px', threshold: 0.01 });
+
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={holderRef} className="lazy-chart-placeholder">
+      {active ? <ChartColumn {...props} /> : null}
+    </div>
+  );
+}
+
 function App() {
   const [view, setView] = useState('index');
   const [presetVersion, setPresetVersion] = useState(0);
@@ -91,6 +118,8 @@ function App() {
     }),
     [sourceItems, resolvedNames],
   );
+
+  const isLazyGroup = view !== 'index';
 
   const handleViewChange = (event) => {
     setView(event.target.value);
@@ -328,15 +357,17 @@ function App() {
       </header>
 
       <div className="dashboard-grid">
-        {selectedItems.map((item, index) => (
-          <ChartColumn
+        {selectedItems.map((item, index) => {
+          const Component = isLazyGroup ? LazyChartColumn : ChartColumn;
+          return <Component
             key={`${view}-${presetVersion}-${item.symbol}-${item.name}`}
             id={`preset-${view}-${presetVersion}-${index + 1}`}
             defaultSymbol={item.symbol}
             defaultName={item.name}
             showBollinger={showBollinger}
-          />
-        ))}
+            useStoredSelection={false}
+          />;
+        })}
       </div>
     </div>
   );

@@ -11,6 +11,34 @@ dotenv.config({ path: '.env.local', quiet: true });
 dotenv.config({ quiet: true });
 
 const yahooFinance = new YahooFinance();
+const YAHOO_MAX_CONCURRENT = 3;
+const yahooQueue = [];
+let yahooActive = 0;
+
+function drainYahooQueue() {
+  while (yahooActive < YAHOO_MAX_CONCURRENT && yahooQueue.length) {
+    const job = yahooQueue.shift();
+    yahooActive += 1;
+    Promise.resolve()
+      .then(job.task)
+      .then(job.resolve, job.reject)
+      .finally(() => {
+        yahooActive -= 1;
+        setTimeout(drainYahooQueue, 80);
+      });
+  }
+}
+
+function yahooCall(task, retries = 2) {
+  return new Promise((resolve, reject) => {
+    yahooQueue.push({ task, resolve, reject, retries });
+    drainYahooQueue();
+  }).catch(async (error) => {
+    if (retries <= 0) throw error;
+    await new Promise(resolve => setTimeout(resolve, 500));
+    return yahooCall(task, retries - 1);
+  });
+}
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -867,12 +895,79 @@ async function fetchKoreanMinuteOhlcv(code, interval, limit) {
   return data;
 }
 
+async function fetchKisOverseasDailyOhlcv(symbol, interval, limit) {
+  const token = await fetchKisAccessToken();
+  if (!token) return [];
+
+  const upper = String(symbol || '').toUpperCase();
+  if (upper.startsWith('^') || upper.includes('=')) return [];
+
+  const exchange = upper.endsWith('.T') ? 'TSE' : 'NAS';
+  const code = upper.replace(/\.T$/, '');
+  const gubn = interval === 'week' ? '1' : interval === 'month' ? '2' : '0';
+  const target = Math.min(Math.max(Number(limit) || 120, 120), 800);
+  const rowsByDate = new Map();
+  let bymd = '';
+  let previousOldest = '';
+
+  for (let page = 0; page < 10 && rowsByDate.size < target; page += 1) {
+    const params = new URLSearchParams({ AUTH: '', EXCD: exchange, SYMB: code, GUBN: gubn, BYMD: bymd, MODP: '1' });
+    const response = await fetch(`${kisBaseUrl()}/uapi/overseas-price/v1/quotations/dailyprice?${params}`, {
+      headers: kisHeaders(token, 'HHDFS76240000'),
+    });
+    if (!response.ok) throw new Error(`KIS overseas OHLCV ${response.status}`);
+
+    const raw = (await response.json()).output2;
+    if (!Array.isArray(raw) || !raw.length) break;
+
+    let oldest = '';
+    for (const row of raw) {
+      const ymd = String(row.xymd || '').trim();
+      if (!/^\d{8}$/.test(ymd)) continue;
+      if (!oldest || ymd < oldest) oldest = ymd;
+
+      const open = parseNumeric(row.open);
+      const high = parseNumeric(row.high);
+      const low = parseNumeric(row.low);
+      const close = parseNumeric(row.clos);
+      const volume = parseNumeric(row.tvol);
+      if (![open, high, low, close].every(Number.isFinite)) continue;
+
+      const time = `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}`;
+      rowsByDate.set(time, { time, open, high, low, close, volume: Number.isFinite(volume) ? volume : 0 });
+    }
+
+    if (!oldest || oldest === previousOldest) break;
+    previousOldest = oldest;
+    const date = new Date(Date.UTC(Number(oldest.slice(0, 4)), Number(oldest.slice(4, 6)) - 1, Number(oldest.slice(6, 8))));
+    date.setUTCDate(date.getUTCDate() - 1);
+    bymd = date.toISOString().slice(0, 10).replaceAll('-', '');
+    if (rowsByDate.size < target) await new Promise(resolve => setTimeout(resolve, 100));
+  }
+
+  const rows = [...rowsByDate.values()].sort((a, b) => a.time.localeCompare(b.time)).slice(-target);
+  if (rows.length < target) throw new Error(`KIS history short ${rows.length}/${target}`);
+  return rows;
+}
+
 async function fetchUsOhlcv(symbol, interval, limit) {
   const cacheKey = `${symbol}:${interval}:${limit}`;
   const now = Date.now();
   const cached = ohlcvCache.get(cacheKey);
   const ttl = interval === 'day' ? 3000 : KRX_INTRADAY_MINUTES[interval] ? KRX_MINUTE_TTL_MS : ['week', 'month'].includes(interval) ? 3600000 : 300000;
   if (cached && now - cached.ts < ttl) return cached.data;
+
+  if (hasKisConfig() && !String(symbol || '').startsWith('^') && !String(symbol || '').includes('=') && ['day', 'week', 'month'].includes(interval)) {
+    try {
+      const kisRows = await fetchKisOverseasDailyOhlcv(symbol, interval, limit);
+      if (kisRows.length) {
+        ohlcvCache.set(cacheKey, { ts: now, data: kisRows });
+        return kisRows;
+      }
+    } catch (error) {
+      console.warn(`KIS OHLCV fallback [${symbol} ${interval}]:`, error.message);
+    }
+  }
 
   const intervalMap = {
     '1m': '1m', '3m': '5m', '5m': '5m', '10m': '10m',
@@ -895,7 +990,7 @@ async function fetchUsOhlcv(symbol, interval, limit) {
 
   let result;
   try {
-    result = await yahooFinance.chart(symbol, { period1, interval: yInterval });
+    result = await yahooCall(() => yahooFinance.chart(symbol, { period1, interval: yInterval }));
   } catch (e) {
     if (['1m', '3m', '5m', '15m', '30m', '60m', '1h'].includes(interval)) {
       const fallbackInterval = fallbackIntervalFor(interval);

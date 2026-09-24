@@ -845,11 +845,17 @@ const BASE_OPTS = {
   },
 };
 
-export default function ChartColumn({ id, defaultSymbol, defaultName, showBollinger = false }) {
-  // ① localStorage로 마지막 선택 종목 복원
+export default function ChartColumn({ id, defaultSymbol, defaultName, showBollinger = false, useStoredSelection = true }) {
+  // 프리셋 차트는 이전 검색 종목(localStorage) 대신 지정된 지수를 우선 사용한다.
   const storageKey = `stock5_symbol_${id}`;
-  const storedRaw   = localStorage.getItem(storageKey);
-  const stored      = storedRaw ? JSON.parse(storedRaw) : null;
+  const storedRaw = useStoredSelection ? localStorage.getItem(storageKey) : null;
+  const stored = (() => {
+    try {
+      return storedRaw ? JSON.parse(storedRaw) : null;
+    } catch {
+      return null;
+    }
+  })();
 
   const [symbol,     setSymbol]     = useState(stored?.symbol || defaultSymbol || null);
   const [symbolName, setSymbolName] = useState(stored?.name   || defaultName   || '');
@@ -869,7 +875,6 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
   const [quote, setQuote] = useState(null);
   const [copyStatus, setCopyStatus] = useState('');
   const [chartsReady, setChartsReady] = useState(false);
-  const [loadVersion, setLoadVersion] = useState(0);
   const [mainVisible, setMainVisible] = useState({
     candle: true,
     ma5: true,
@@ -930,8 +935,8 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
     setSymbol(sym);
     setSymbolName(name);
     setError('');
-    localStorage.setItem(storageKey, JSON.stringify({ symbol: sym, name }));
-  }, [storageKey]);
+    if (useStoredSelection) localStorage.setItem(storageKey, JSON.stringify({ symbol: sym, name }));
+  }, [storageKey, useStoredSelection]);
 
   useEffect(() => {
     symbolRef.current = symbol;
@@ -1165,7 +1170,6 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
       chart.priceScale('right').applyOptions({ minimumWidth: PRICE_SCALE_WIDTH });
     });
     setChartsReady(true);
-    setTimeout(() => setLoadVersion(v => v + 1), 0);
 
     // ⑧ 타임스케일 동기화 (양방향: price↔volume↔macd)
     const triCharts = [pc, vc, mc];
@@ -1326,6 +1330,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
     return () => {
       window.removeEventListener('resize', onResize);
       inited.current = false;
+      setChartsReady(false);
       bgCanvasRef.current?.remove();
       cloudCanvas.current?.remove();
       bgCanvasRef.current = null;
@@ -1744,29 +1749,38 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
     });
   }, [drawCloud, ichiLimit]);
 
-  // 메인 캔들/거래량/MACD는 위쪽 봉 버튼과 기간만 바뀔 때 다시 로드
+  // 차트 시리즈 초기화 완료 직후에도 최초 데이터를 즉시 불러온다.
   useEffect(() => {
-    if (!symbol) return;
+    if (!symbol || !chartsReady) return undefined;
+    let cancelled = false;
     const timer = setTimeout(() => {
+      if (cancelled) return;
       setError('');
       setLoading(true);
+      fetchMain(symbol, mainTf, limit)
+        .catch(error => {
+          if (!cancelled && !String(error?.message || '').includes('Value is null')) {
+            setError(error?.message || '차트 데이터를 불러오지 못했습니다.');
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
     }, 0);
-    fetchMain(symbol, mainTf, limit)
-      .catch(e => {
-        if (!String(e.message || '').includes('Value is null')) setError(e.message);
-      })
-      .finally(() => {
-        clearTimeout(timer);
-        setLoading(false);
-      });
-    return () => clearTimeout(timer);
-  }, [symbol, mainTf, limit, loadVersion, fetchMain]);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [symbol, mainTf, limit, chartsReady, fetchMain]);
 
-  // 일목균형표는 아래쪽 일목 봉 버튼과 기간이 바뀔 때만 다시 로드
+  // 일목균형표도 최초 렌더링 시 메인 차트와 함께 불러온다.
   useEffect(() => {
-    if (!symbol) return;
-    fetchIchi(symbol, ichiTf, ichiLimit).catch(() => {});
-  }, [symbol, ichiTf, ichiLimit, loadVersion, fetchIchi]);
+    if (!symbol || !chartsReady) return undefined;
+    fetchIchi(symbol, ichiTf, ichiLimit).catch(error => {
+      console.warn(`일목균형표 초기 로드 실패 [${symbol}]`, error);
+    });
+    return undefined;
+  }, [symbol, ichiTf, ichiLimit, chartsReady, fetchIchi]);
 
   useEffect(() => {
     if (!charts.current.price) return;
