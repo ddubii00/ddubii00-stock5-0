@@ -1,0 +1,69 @@
+/* stock5-0 preset/index header overrides
+   기존 stock5-7 차트 스타일은 그대로 유지하고 상단 헤더만 조정한다. */
+
+.app-header {
+  gap: 4px;
+  padding: 8px 12px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.market-summary {
+  gap: 0;
+  margin-left: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.market-item + .market-item::before {
+  margin: 0;
+}
+
+.market-change-fixed {
+  margin-left: 1px;
+}
+
+.index-view-control {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-left: auto;
+  margin-right: 2px;
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.index-view-control select {
+  min-width: 150px;
+  padding: 4px 24px 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+@media (max-width: 1024px) {
+  .app-header {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .market-summary {
+    width: auto;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 767px) {
+  .market-summary {
+    width: auto;
+    justify-content: flex-start;
+    text-align: left;
+  }
+}
