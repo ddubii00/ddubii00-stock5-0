@@ -29,12 +29,17 @@ function replaceOnce(text, from, to, label) {
   return text.replace(from, to);
 }
 
+function replaceRegex(text, regex, replacement, label) {
+  if (!regex.test(text)) throw new Error(`${label}: target not found`);
+  return text.replace(regex, replacement);
+}
+
 async function patchServer() {
   const path = 'scripts/server.js';
   let s = await read(path);
 
-  const block = `
-// STOCK5_LIVE_TOP100_SERVER_PATCH
+  const blockV2 = `
+// STOCK5_LIVE_TOP100_SERVER_PATCH_V2
 const NAVER_TOP100_API_URL =
   'https://stock.naver.com/api/stockSecurity/individual-stocks/v3/domestic';
 
@@ -64,34 +69,43 @@ async function fetchLiveTop100Page(market, pageIndex) {
 }
 
 async function loadLiveTop100(market) {
-  const pages = await Promise.all([
-    fetchLiveTop100Page(market, 0),
-    fetchLiveTop100Page(market, 1),
-  ]);
-
   const suffix = market === 'kosdaq' ? 'KQ' : 'KS';
   const seen = new Set();
   const items = [];
 
-  for (const row of pages.flat()) {
-    const code = String(row?.itemCode || '').trim();
-    const name = String(row?.itemName || '').trim();
-    if (!/^\\d{6}$/.test(code) || !name || seen.has(code)) continue;
-    seen.add(code);
-    items.push({
-      rank: items.length + 1,
-      code,
-      symbol: \`\${code}.\${suffix}\`,
-      name,
-    });
-    if (items.length >= 100) break;
+  // 실시간 시총순위가 페이지 조회 사이에 변하면 50위/51위 같은 경계 종목이
+  // 중복되어 99개가 될 수 있다. 그래서 100개가 찰 때까지 최대 5페이지를
+  // 순서대로 추가 조회하고 종목코드 기준으로 중복 제거한다.
+  for (let pageIndex = 0; pageIndex < 5 && items.length < 100; pageIndex += 1) {
+    const rows = await fetchLiveTop100Page(market, pageIndex);
+
+    for (const row of rows) {
+      const code = String(row?.itemCode || '').trim();
+      const name = String(row?.itemName || row?.stockName || row?.name || '').trim();
+
+      if (!/^\\d{6}$/.test(code) || !name || seen.has(code)) continue;
+
+      seen.add(code);
+      items.push({
+        code,
+        symbol: \`\${code}.\${suffix}\`,
+        name,
+      });
+
+      if (items.length >= 100) break;
+    }
+
+    if (!rows.length) break;
   }
 
   if (items.length < 100) {
-    throw new Error(\`Top100 expected 100 rows, received \${items.length}\`);
+    throw new Error(\`Top100 expected 100 unique rows, received \${items.length}\`);
   }
 
-  return items;
+  return items.slice(0, 100).map((item, index) => ({
+    ...item,
+    rank: index + 1,
+  }));
 }
 
 app.get('/api/top100', async (req, res) => {
@@ -117,13 +131,20 @@ app.get('/api/top100', async (req, res) => {
 
 `;
 
-  s = insertBefore(
-    s,
-    "app.get('/api/search', async (req, res) => {",
-    block,
-    'STOCK5_LIVE_TOP100_SERVER_PATCH',
-    path,
-  );
+  const oldV1 = /\/\/ STOCK5_LIVE_TOP100_SERVER_PATCH\n[\s\S]*?\napp\.get\('\/api\/top100', async \(req, res\) => \{[\s\S]*?\n\}\);\n\n/;
+  if (s.includes('STOCK5_LIVE_TOP100_SERVER_PATCH_V2')) {
+    // already applied
+  } else if (oldV1.test(s)) {
+    s = s.replace(oldV1, blockV2.trimStart());
+  } else {
+    s = insertBefore(
+      s,
+      "app.get('/api/search', async (req, res) => {",
+      blockV2,
+      'STOCK5_LIVE_TOP100_SERVER_PATCH_V2',
+      path,
+    );
+  }
 
   await write(path, s);
 }
@@ -132,28 +153,26 @@ async function patchApp() {
   const path = 'src/App.jsx';
   let s = await read(path);
 
-  if (!s.includes('STOCK5_SHARED_APP_STATE')) {
-    throw new Error(`${path}: 먼저 apply-stock5-0-update.mjs 를 실행해야 합니다.`);
-  }
-
-  s = insertAfter(
-    s,
-    `function koreanCode(symbol) {
+  // 앱 쪽 V1 패치는 그대로 재사용한다.
+  if (!s.includes('STOCK5_LIVE_TOP100_APP_PATCH')) {
+    s = insertAfter(
+      s,
+      `function koreanCode(symbol) {
   return String(symbol || '').match(/^(\\d{6})\\.(KS|KQ)$/)?.[1] || null;
 }
 `,
-    `
+      `
 const KOREAN_TOP100_VIEWS = new Set(['kospi100', 'kosdaq100']); // STOCK5_LIVE_TOP100_APP_PATCH
 `,
-    'STOCK5_LIVE_TOP100_APP_PATCH',
-    path,
-  );
+      'STOCK5_LIVE_TOP100_APP_PATCH',
+      path,
+    );
 
-  s = insertAfter(
-    s,
-    `  const [resolvedNames, setResolvedNames] = useState({});
+    s = insertAfter(
+      s,
+      `  const [resolvedNames, setResolvedNames] = useState({});
 `,
-    `  const [liveKoreanGroups, setLiveKoreanGroups] = useState({
+      `  const [liveKoreanGroups, setLiveKoreanGroups] = useState({
     kospi100: null,
     kosdaq100: null,
   });
@@ -167,16 +186,16 @@ const KOREAN_TOP100_VIEWS = new Set(['kospi100', 'kosdaq100']); // STOCK5_LIVE_T
   });
   const top100RequestSeqRef = useRef({ kospi100: 0, kosdaq100: 0 });
 `,
-    'top100RequestSeqRef',
-    path,
-  );
+      'top100RequestSeqRef',
+      path,
+    );
 
-  const oldSource = `  const sourceItems = view === 'index'
+    const oldSource = `  const sourceItems = view === 'index'
     ? INDEX_ITEMS
     : GROUPS[view].items;
 `;
 
-  const newSource = `  const loadLiveTop100 = useCallback(async (groupKey, signal) => {
+    const newSource = `  const loadLiveTop100 = useCallback(async (groupKey, signal) => {
     if (!KOREAN_TOP100_VIEWS.has(groupKey)) return [];
 
     const requestId = (top100RequestSeqRef.current[groupKey] || 0) + 1;
@@ -230,8 +249,6 @@ const KOREAN_TOP100_VIEWS = new Set(['kospi100', 'kosdaq100']); // STOCK5_LIVE_T
     }
   }, []);
 
-  // 화면 진입 직후 KOSPI/KOSDAQ 시총 Top100을 미리 받아 둔다.
-  // 따라서 차트를 처음 그릴 때부터 임시 코드명이 아니라 실제 종목명이 표시된다.
   useEffect(() => {
     const controller = new AbortController();
     void loadLiveTop100('kospi100', controller.signal);
@@ -247,9 +264,9 @@ const KOREAN_TOP100_VIEWS = new Set(['kospi100', 'kosdaq100']); // STOCK5_LIVE_T
       : GROUPS[view].items;
 `;
 
-  s = replaceOnce(s, oldSource, newSource, path);
+    s = replaceOnce(s, oldSource, newSource, path);
 
-  const oldHandle = `  const handleViewChange = (event) => {
+    const oldHandle = `  const handleViewChange = (event) => {
     setView(event.target.value);
     // ChartColumn의 localStorage가 프리셋 종목을 덮어쓰지 않도록
     // 그룹 전환 시 새로운 storage key로 다시 마운트한다.
@@ -257,15 +274,11 @@ const KOREAN_TOP100_VIEWS = new Set(['kospi100', 'kosdaq100']); // STOCK5_LIVE_T
   };
 `;
 
-  const newHandle = `  const handleViewChange = (event) => {
+    const newHandle = `  const handleViewChange = (event) => {
     const nextView = event.target.value;
     setView(nextView);
-    // ChartColumn의 localStorage가 프리셋 종목을 덮어쓰지 않도록
-    // 그룹 전환 시 새로운 storage key로 다시 마운트한다.
     setPresetVersion(version => version + 1);
 
-    // KOSPI100/KOSDAQ100은 선택할 때마다 현재 시총순위를 다시 조회한다.
-    // 기존 목록을 잠시 비워 코드 placeholder가 화면에 나타나지 않게 한다.
     if (KOREAN_TOP100_VIEWS.has(nextView)) {
       setLiveKoreanGroups(current => ({ ...current, [nextView]: null }));
       void loadLiveTop100(nextView);
@@ -273,25 +286,12 @@ const KOREAN_TOP100_VIEWS = new Set(['kospi100', 'kosdaq100']); // STOCK5_LIVE_T
   };
 `;
 
-  s = replaceOnce(s, oldHandle, newHandle, path);
+    s = replaceOnce(s, oldHandle, newHandle, path);
 
-  s = replaceOnce(
-    s,
-    `      .filter(item => item.code && !resolvedNames[item.code]);
-`,
-    `      .filter(item => (
-        item.code
-        && !resolvedNames[item.code]
-        && /^(KOSPI100|KOSDAQ100)\\s+\\d+\\s+·/.test(String(sourceItems.find(row => row.symbol === item.symbol)?.name || ''))
-      ));
-`,
-    path,
-  );
-
-  const oldDashboard = `      <div className="dashboard-grid">
+    const oldDashboard = `      <div className="dashboard-grid">
         {selectedItems.map((item, index) => {
 `;
-  const newDashboard = `      <div className="dashboard-grid">
+    const newDashboard = `      <div className="dashboard-grid">
         {isKoreanTop100View && liveTop100Loading[view] && selectedItems.length === 0 && (
           <div className="top100-status">현재 시가총액 Top 100 불러오는 중...</div>
         )}
@@ -300,7 +300,8 @@ const KOREAN_TOP100_VIEWS = new Set(['kospi100', 'kosdaq100']); // STOCK5_LIVE_T
         )}
         {selectedItems.map((item, index) => {
 `;
-  s = replaceOnce(s, oldDashboard, newDashboard, path);
+    s = replaceOnce(s, oldDashboard, newDashboard, path);
+  }
 
   await write(path, s);
 }
@@ -308,9 +309,8 @@ const KOREAN_TOP100_VIEWS = new Set(['kospi100', 'kosdaq100']); // STOCK5_LIVE_T
 async function patchCss() {
   const path = 'src/index.css';
   let s = await read(path);
-  if (s.includes('STOCK5_LIVE_TOP100_STYLE_PATCH')) return;
-
-  s += `
+  if (!s.includes('STOCK5_LIVE_TOP100_STYLE_PATCH')) {
+    s += `
 
 /* STOCK5_LIVE_TOP100_STYLE_PATCH */
 .top100-status {
@@ -329,15 +329,15 @@ async function patchCss() {
   border-color: #fecaca;
 }
 `;
-
-  await write(path, s);
+    await write(path, s);
+  }
 }
 
 async function main() {
   await patchServer();
   await patchApp();
   await patchCss();
-  console.log('OK: stock5-0 live KOSPI/KOSDAQ market-cap Top100 + immediate names applied');
+  console.log('OK: live Top100 V2 - collect 100 unique rows across extra pages');
 }
 
 main().catch((error) => {

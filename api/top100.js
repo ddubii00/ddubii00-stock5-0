@@ -26,6 +26,43 @@ async function fetchPage(market, pageIndex) {
   return Array.isArray(payload?.items) ? payload.items : [];
 }
 
+async function loadTop100(market) {
+  const suffix = market === 'kosdaq' ? 'KQ' : 'KS';
+  const seen = new Set();
+  const items = [];
+
+  for (let pageIndex = 0; pageIndex < 5 && items.length < 100; pageIndex += 1) {
+    const rows = await fetchPage(market, pageIndex);
+
+    for (const row of rows) {
+      const code = String(row?.itemCode || '').trim();
+      const name = String(row?.itemName || row?.stockName || row?.name || '').trim();
+
+      if (!/^\d{6}$/.test(code) || !name || seen.has(code)) continue;
+
+      seen.add(code);
+      items.push({
+        code,
+        symbol: `${code}.${suffix}`,
+        name,
+      });
+
+      if (items.length >= 100) break;
+    }
+
+    if (!rows.length) break;
+  }
+
+  if (items.length < 100) {
+    throw new Error(`Top100 expected 100 unique rows, received ${items.length}`);
+  }
+
+  return items.slice(0, 100).map((item, index) => ({
+    ...item,
+    rank: index + 1,
+  }));
+}
+
 export default async function handler(req, res) {
   try {
     const market = String(req.query?.market || '').trim().toLowerCase();
@@ -33,32 +70,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'market must be kospi or kosdaq' });
     }
 
-    const pages = await Promise.all([
-      fetchPage(market, 0),
-      fetchPage(market, 1),
-    ]);
-
-    const suffix = market === 'kosdaq' ? 'KQ' : 'KS';
-    const seen = new Set();
-    const items = [];
-
-    for (const row of pages.flat()) {
-      const code = String(row?.itemCode || '').trim();
-      const name = String(row?.itemName || '').trim();
-      if (!/^\d{6}$/.test(code) || !name || seen.has(code)) continue;
-      seen.add(code);
-      items.push({
-        rank: items.length + 1,
-        code,
-        symbol: `${code}.${suffix}`,
-        name,
-      });
-      if (items.length >= 100) break;
-    }
-
-    if (items.length < 100) {
-      throw new Error(`Top100 expected 100 rows, received ${items.length}`);
-    }
+    const items = await loadTop100(market);
 
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     return res.status(200).json({
