@@ -24,12 +24,11 @@ async function patchChartColumn() {
 
   // 1) 평균가 수평선: 캔들 데이터가 실제로 로드될 때까지 기다렸다가
   //    createPriceLine을 생성한다. 초기 렌더 타이밍 때문에 선이 누락되던 문제를 방지한다.
-  const oldPriceLineEffect = /  \/\/ STOCK5_AVERAGE_PRICE_LINE_PATCH\n  useEffect\(\(\) => \{[\s\S]*?\n  \}, \[chartsReady, positionState\?\.averagePrice, symbol\]\);\n/;
-  const newPriceLineEffect = `  // STOCK5_AVERAGE_PRICE_LINE_PATCH_V2\n  useEffect(() => {\n    let cancelled = false;\n    let retryTimer = null;\n\n    const removeAveragePriceLine = () => {\n      const candleSeries = ser.current.candle;\n      if (averagePriceLineRef.current && candleSeries) {\n        try { candleSeries.removePriceLine(averagePriceLineRef.current); } catch {}\n      }\n      averagePriceLineRef.current = null;\n    };\n\n    const drawAveragePriceLine = () => {\n      if (cancelled) return;\n      removeAveragePriceLine();\n\n      const price = Number(positionState?.averagePrice);\n      if (!Number.isFinite(price) || price <= 0) return;\n\n      const candleSeries = ser.current.candle;\n      const hasCandleData = Array.isArray(mainCandlesRef.current) && mainCandlesRef.current.length > 0;\n\n      if (!chartsReady || !candleSeries || !hasCandleData) {\n        retryTimer = setTimeout(drawAveragePriceLine, 250);\n        return;\n      }\n\n      try {\n        averagePriceLineRef.current = candleSeries.createPriceLine({\n          price,\n          color: '#dc2626',\n          lineWidth: 2,\n          lineStyle: 2,\n          axisLabelVisible: true,\n          title: '매입가',\n        });\n\n        // 평균가가 현재 가격 범위와 조금 떨어져 있어도 보이도록 가격축을 다시 맞춘다.\n        try { charts.current.price?.priceScale('right').applyOptions({ autoScale: true }); } catch {}\n      } catch (error) {\n        console.warn('매입가 수평선 생성 실패:', error);\n        retryTimer = setTimeout(drawAveragePriceLine, 500);\n      }\n    };\n\n    drawAveragePriceLine();\n\n    return () => {\n      cancelled = true;\n      if (retryTimer) clearTimeout(retryTimer);\n      removeAveragePriceLine();\n    };\n  }, [chartsReady, positionState?.averagePrice, symbol, mainTf?.interval]);\n`;
+  //    V3: "매입가" 태그를 숨기고, 선 두께를 지원 최소값(1px)으로 줄인다.
+  const oldPriceLineEffect = /  \/\/ STOCK5_AVERAGE_PRICE_LINE_PATCH(?:_V2)?\n  useEffect\(\(\) => \{[\s\S]*?\n  \}, \[chartsReady, positionState\?\.averagePrice, symbol(?:, mainTf\?\.interval)?\]\);\n/;
+  const newPriceLineEffect = `  // STOCK5_AVERAGE_PRICE_LINE_PATCH_V3\n  useEffect(() => {\n    let cancelled = false;\n    let retryTimer = null;\n\n    const removeAveragePriceLine = () => {\n      const candleSeries = ser.current.candle;\n      if (averagePriceLineRef.current && candleSeries) {\n        try { candleSeries.removePriceLine(averagePriceLineRef.current); } catch {}\n      }\n      averagePriceLineRef.current = null;\n    };\n\n    const drawAveragePriceLine = () => {\n      if (cancelled) return;\n      removeAveragePriceLine();\n\n      const price = Number(positionState?.averagePrice);\n      if (!Number.isFinite(price) || price <= 0) return;\n\n      const candleSeries = ser.current.candle;\n      const hasCandleData = Array.isArray(mainCandlesRef.current) && mainCandlesRef.current.length > 0;\n\n      if (!chartsReady || !candleSeries || !hasCandleData) {\n        retryTimer = setTimeout(drawAveragePriceLine, 250);\n        return;\n      }\n\n      try {\n        averagePriceLineRef.current = candleSeries.createPriceLine({\n          price,\n          color: '#dc2626',\n          lineWidth: 1,\n          lineStyle: 2,\n          axisLabelVisible: false,\n          title: '',\n        });\n\n        // 평균가가 현재 가격 범위와 조금 떨어져 있어도 보이도록 가격축을 다시 맞춘다.\n        try { charts.current.price?.priceScale('right').applyOptions({ autoScale: true }); } catch {}\n      } catch (error) {\n        console.warn('매입가 수평선 생성 실패:', error);\n        retryTimer = setTimeout(drawAveragePriceLine, 500);\n      }\n    };\n\n    drawAveragePriceLine();\n\n    return () => {\n      cancelled = true;\n      if (retryTimer) clearTimeout(retryTimer);\n      removeAveragePriceLine();\n    };\n  }, [chartsReady, positionState?.averagePrice, symbol, mainTf?.interval]);\n`;
 
-  if (s.includes('STOCK5_AVERAGE_PRICE_LINE_PATCH_V2')) {
-    // already applied
-  } else {
+  if (!s.includes('STOCK5_AVERAGE_PRICE_LINE_PATCH_V3')) {
     s = replaceRegex(s, oldPriceLineEffect, newPriceLineEffect, 'average price line effect');
   }
 
@@ -78,7 +77,7 @@ async function patchCss() {
 async function main() {
   await patchChartColumn();
   await patchCss();
-  console.log('OK: stock5-0 position buttons / input workflow / average-price line fix applied');
+  console.log('OK: stock5-0 controls / average-price line V3 fix applied');
 }
 
 main().catch((error) => {
