@@ -23,18 +23,12 @@ function insertAfter(text, anchor, addition, marker, label) {
   return text.slice(0, index + anchor.length) + addition + text.slice(index + anchor.length);
 }
 
-function replaceOnce(text, from, to, label) {
-  if (text.includes(to)) return text;
-  if (!text.includes(from)) throw new Error(`${label}: target not found`);
-  return text.replace(from, to);
-}
-
 async function patchServer() {
   const path = 'scripts/server.js';
   let s = await read(path);
 
   const block = `
-// STOCK5_FUNDAMENTALS_SERVER_V1
+// STOCK5_FUNDAMENTALS_SERVER_V2
 const STOCK5_FUNDAMENTALS_TTL_MS = 1000 * 60 * 60 * 6;
 const stockFundamentalsCache = new Map();
 
@@ -43,7 +37,158 @@ function fundamentalNumber(value) {
   return Number.isFinite(n) ? n : null;
 }
 
-function buildStockFundamentals(symbol, summary) {
+function naverScalar(value) {
+  if (value == null) return null;
+  const cleaned = String(value)
+    .replace(/,/g, '')
+    .replace(/\\+/g, '')
+    .trim();
+  if (!cleaned || cleaned === '-' || cleaned === '_') return null;
+  const n = Number(cleaned.replace(/[^0-9.\\-]/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+
+function naverWon(value) {
+  if (value == null) return null;
+  const text = String(value).replace(/,/g, '').trim();
+  if (!text || text === '-' || text === '_') return null;
+
+  let total = 0;
+  let found = false;
+  const units = { 조: 1e12, 억: 1e8, 만: 1e4 };
+  for (const match of text.matchAll(/(-?[0-9.]+)\\s*(조|억|만)/g)) {
+    const n = Number(match[1]);
+    if (!Number.isFinite(n)) continue;
+    total += n * units[match[2]];
+    found = true;
+  }
+  if (found) return total;
+
+  return naverScalar(text);
+}
+
+function isKoreanFundamentalSymbol(symbol) {
+  return /^\\d{6}(\\.(KS|KQ))?$/.test(String(symbol || '').toUpperCase());
+}
+
+function financeRowValue(financeInfo, title, periodKey) {
+  if (!periodKey) return null;
+  const normalizedTarget = String(title).replace(/\\s+/g, '');
+  const row = (financeInfo?.rowList || []).find((item) => {
+    const normalized = String(item?.title || '')
+      .replace(/\\s+/g, '')
+      .replace(/\\(%\\)/g, '');
+    return normalized === normalizedTarget || normalized.startsWith(normalizedTarget);
+  });
+  return naverScalar(row?.columns?.[periodKey]?.value);
+}
+
+function latestActualPeriod(financeInfo) {
+  const actual = (financeInfo?.trTitleList || [])
+    .filter((item) => item?.key && String(item?.isConsensus || '').toUpperCase() !== 'Y')
+    .map((item) => String(item.key));
+  return actual.length ? actual[actual.length - 1] : null;
+}
+
+function previousActualPeriod(financeInfo, latestKey) {
+  const actual = (financeInfo?.trTitleList || [])
+    .filter((item) => item?.key && String(item?.isConsensus || '').toUpperCase() !== 'Y')
+    .map((item) => String(item.key));
+  const index = actual.lastIndexOf(String(latestKey || ''));
+  return index > 0 ? actual[index - 1] : null;
+}
+
+async function fetchJsonLoose(url) {
+  const response = await fetch(url, {
+    headers: {
+      'Accept': 'application/json',
+      'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
+      'Referer': 'https://m.stock.naver.com/',
+      'User-Agent': 'Mozilla/5.0',
+    },
+  });
+  if (!response.ok) throw new Error(\`HTTP \${response.status}: \${url}\`);
+  return response.json();
+}
+
+async function loadKoreanFundamentals(symbol) {
+  const code = cleanKoreanCode(symbol);
+  const base = \`https://m.stock.naver.com/api/stock/\${code}\`;
+
+  const [integrationResult, annualResult] = await Promise.allSettled([
+    fetchJsonLoose(\`\${base}/integration\`),
+    fetchJsonLoose(\`\${base}/finance/annual\`),
+  ]);
+
+  const integration = integrationResult.status === 'fulfilled' ? integrationResult.value : {};
+  const annual = annualResult.status === 'fulfilled' ? annualResult.value : {};
+  const infos = new Map(
+    (integration?.totalInfos || [])
+      .filter((item) => item?.code)
+      .map((item) => [String(item.code), item.value]),
+  );
+
+  const financeInfo = annual?.financeInfo || {};
+  const period = latestActualPeriod(financeInfo);
+  const previousPeriod = previousActualPeriod(financeInfo, period);
+
+  const revenueEok = financeRowValue(financeInfo, '매출액', period);
+  const previousRevenueEok = financeRowValue(financeInfo, '매출액', previousPeriod);
+  const operatingProfitEok = financeRowValue(financeInfo, '영업이익', period);
+  const annualRoePct = financeRowValue(financeInfo, 'ROE', period);
+  const annualOpMarginPct = financeRowValue(financeInfo, '영업이익률', period);
+
+  const eps = naverScalar(infos.get('eps'))
+    ?? financeRowValue(financeInfo, 'EPS', period);
+  const bps = naverScalar(infos.get('bps'))
+    ?? financeRowValue(financeInfo, 'BPS', period);
+  const per = naverScalar(infos.get('per'))
+    ?? financeRowValue(financeInfo, 'PER', period);
+  const pbr = naverScalar(infos.get('pbr'))
+    ?? financeRowValue(financeInfo, 'PBR', period);
+
+  const roePct = Number.isFinite(annualRoePct)
+    ? annualRoePct
+    : (Number.isFinite(eps) && Number.isFinite(bps) && bps !== 0 ? (eps / bps) * 100 : null);
+
+  const operatingMargin = Number.isFinite(annualOpMarginPct)
+    ? annualOpMarginPct / 100
+    : (
+        Number.isFinite(revenueEok) && revenueEok !== 0 && Number.isFinite(operatingProfitEok)
+          ? operatingProfitEok / revenueEok
+          : null
+      );
+
+  const revenueGrowth = (
+    Number.isFinite(revenueEok)
+    && Number.isFinite(previousRevenueEok)
+    && previousRevenueEok !== 0
+  )
+    ? (revenueEok - previousRevenueEok) / Math.abs(previousRevenueEok)
+    : null;
+
+  return {
+    symbol: String(symbol).toUpperCase(),
+    source: 'naver',
+    period,
+    currency: 'KRW',
+    marketCap: naverWon(infos.get('marketValue')),
+    revenue: Number.isFinite(revenueEok) ? revenueEok * 1e8 : null,
+    operatingIncome: Number.isFinite(operatingProfitEok) ? operatingProfitEok * 1e8 : null,
+    operatingIncomeEstimated: false,
+    pe: Number.isFinite(per) && per > 0 ? per : null,
+    peForward: false,
+    pbr: Number.isFinite(pbr) && pbr > 0 ? pbr : null,
+    roe: Number.isFinite(roePct) ? roePct / 100 : null,
+    eps: Number.isFinite(eps) ? eps : null,
+    operatingMargin,
+    revenueGrowth,
+    debtToEquity: null,
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
+function buildYahooFundamentals(symbol, summary) {
   const price = summary?.price || {};
   const detail = summary?.summaryDetail || {};
   const stats = summary?.defaultKeyStatistics || {};
@@ -70,18 +215,23 @@ function buildStockFundamentals(symbol, summary) {
 
   const trailingPe = fundamentalNumber(detail.trailingPE);
   const forwardPe = fundamentalNumber(detail.forwardPE ?? stats.forwardPE);
-  const pe = Number.isFinite(trailingPe) ? trailingPe : forwardPe;
+  const pe = Number.isFinite(trailingPe) && trailingPe > 0
+    ? trailingPe
+    : (Number.isFinite(forwardPe) && forwardPe > 0 ? forwardPe : null);
+
+  const pbrValue = fundamentalNumber(stats.priceToBook);
 
   return {
     symbol,
+    source: 'yahoo',
     currency: String(financial.financialCurrency || price.currency || detail.currency || '').toUpperCase(),
     marketCap,
     revenue,
     operatingIncome,
     operatingIncomeEstimated,
     pe,
-    peForward: !Number.isFinite(trailingPe) && Number.isFinite(forwardPe),
-    pbr: fundamentalNumber(stats.priceToBook),
+    peForward: !(Number.isFinite(trailingPe) && trailingPe > 0) && Number.isFinite(forwardPe) && forwardPe > 0,
+    pbr: Number.isFinite(pbrValue) && pbrValue > 0 ? pbrValue : null,
     roe: fundamentalNumber(financial.returnOnEquity),
     eps: fundamentalNumber(stats.trailingEps),
     operatingMargin,
@@ -100,24 +250,28 @@ async function loadStockFundamentals(symbol) {
     return cached.data;
   }
 
-  const summary = await yahooCall(() => yahooFinance.quoteSummary(normalized, {
-    modules: [
-      'price',
-      'summaryDetail',
-      'defaultKeyStatistics',
-      'financialData',
-      'incomeStatementHistory',
-    ],
-  }), 1);
+  let data = null;
 
-  const quoteType = String(summary?.price?.quoteType || '').toUpperCase();
-  if (quoteType && quoteType !== 'EQUITY') {
-    stockFundamentalsCache.set(normalized, { loadedAt: Date.now(), data: null });
-    return null;
+  if (isKoreanFundamentalSymbol(normalized)) {
+    data = await loadKoreanFundamentals(normalized);
+  } else {
+    const summary = await yahooCall(() => yahooFinance.quoteSummary(normalized, {
+      modules: [
+        'price',
+        'summaryDetail',
+        'defaultKeyStatistics',
+        'financialData',
+        'incomeStatementHistory',
+      ],
+    }), 1);
+
+    const quoteType = String(summary?.price?.quoteType || '').toUpperCase();
+    if (!quoteType || quoteType === 'EQUITY') {
+      data = buildYahooFundamentals(normalized, summary);
+    }
   }
 
-  const data = buildStockFundamentals(normalized, summary);
-  const hasAny = [
+  const hasAny = data && [
     data.marketCap,
     data.revenue,
     data.operatingIncome,
@@ -125,7 +279,7 @@ async function loadStockFundamentals(symbol) {
     data.pbr,
     data.roe,
     data.eps,
-  ].some(Number.isFinite);
+  ].some((value) => Number.isFinite(value));
 
   const result = hasAny ? data : null;
   stockFundamentalsCache.set(normalized, { loadedAt: Date.now(), data: result });
@@ -138,7 +292,7 @@ app.get('/api/fundamentals', async (req, res) => {
     if (!symbol) return res.status(400).json({ error: 'symbol required' });
 
     const data = await loadStockFundamentals(symbol);
-    res.set('Cache-Control', 'public, max-age=900, stale-while-revalidate=21600');
+    res.set('Cache-Control', 'no-store');
     return res.json(data || { symbol: symbol.toUpperCase(), unavailable: true });
   } catch (error) {
     console.error(\`Fundamentals error [\${req.query.symbol}]:\`, error.message);
@@ -148,13 +302,25 @@ app.get('/api/fundamentals', async (req, res) => {
 
 `;
 
-  s = insertBefore(
-    s,
-    "app.get('/api/ohlcv', async (req, res) => {",
-    block,
-    'STOCK5_FUNDAMENTALS_SERVER_V1',
-    path,
-  );
+  const oldStart = s.indexOf('// STOCK5_FUNDAMENTALS_SERVER_V1');
+  const oldV2Start = s.indexOf('// STOCK5_FUNDAMENTALS_SERVER_V2');
+  const routeAnchor = "app.get('/api/ohlcv', async (req, res) => {";
+
+  if (oldV2Start >= 0) {
+    console.log(`${path}: fundamentals server V2 already applied`);
+  } else if (oldStart >= 0) {
+    const end = s.indexOf(routeAnchor, oldStart);
+    if (end < 0) throw new Error(`${path}: fundamentals V1 end anchor not found`);
+    s = s.slice(0, oldStart) + block + s.slice(end);
+  } else {
+    s = insertBefore(
+      s,
+      routeAnchor,
+      block,
+      'STOCK5_FUNDAMENTALS_SERVER_V2',
+      path,
+    );
+  }
 
   await write(path, s);
 }
@@ -163,27 +329,29 @@ async function patchApp() {
   const path = 'src/App.jsx';
   let s = await read(path);
 
-  // 헤더 등락률: 소수점 1자리
-  s = replaceOnce(
-    s,
-    "  return `${sign}${n.toFixed(2)}%`;\n",
-    "  return `${sign}${n.toFixed(1)}%`; // STOCK5_HEADER_NUMBER_FORMAT_V1\n",
-    path,
-  );
+  if (!s.includes('STOCK5_HEADER_NUMBER_FORMAT_V2')) {
+    const percentV2 = "  return `${sign}${n.toFixed(1)}%`; // STOCK5_HEADER_NUMBER_FORMAT_V2\n";
+    const percentV1 = "  return `${sign}${n.toFixed(1)}%`; // STOCK5_HEADER_NUMBER_FORMAT_V1\n";
+    const percentOriginal = "  return `${sign}${n.toFixed(2)}%`;\n";
+    if (s.includes(percentV1)) s = s.replace(percentV1, percentV2);
+    else if (s.includes(percentOriginal)) s = s.replace(percentOriginal, percentV2);
+    else throw new Error(`${path}: header percent formatter target not found`);
 
-  // 헤더 지수/환율 및 절대 변화량: 소수점 제거
-  s = s.replaceAll('formatFixed(marketSummary.usdKrw.price, 2)', 'formatFixed(marketSummary.usdKrw.price, 0)');
-  s = s.replaceAll('formatSignedFixed(marketSummary.usdKrw.change, 2)', 'formatSignedFixed(marketSummary.usdKrw.change, 0)');
-  s = s.replaceAll('formatFixed(marketSummary.kospi.price, 2)', 'formatFixed(marketSummary.kospi.price, 0)');
-  s = s.replaceAll('formatSignedFixed(marketSummary.kospi.change, 2)', 'formatSignedFixed(marketSummary.kospi.change, 0)');
-  s = s.replaceAll('formatFixed(marketSummary.kosdaq.price, 2)', 'formatFixed(marketSummary.kosdaq.price, 0)');
-  s = s.replaceAll('formatSignedFixed(marketSummary.kosdaq.change, 2)', 'formatSignedFixed(marketSummary.kosdaq.change, 0)');
-  s = s.replaceAll('formatFixed(marketSummary.nasdaq.price, 2)', 'formatFixed(marketSummary.nasdaq.price, 0)');
-  s = s.replaceAll('formatSignedFixed(marketSummary.nasdaq.change, 2)', 'formatSignedFixed(marketSummary.nasdaq.change, 0)');
-  s = s.replaceAll('formatFixed(marketSummary.sp500.price, 2)', 'formatFixed(marketSummary.sp500.price, 0)');
-  s = s.replaceAll('formatSignedFixed(marketSummary.sp500.change, 2)', 'formatSignedFixed(marketSummary.sp500.change, 0)');
+    s = s.replaceAll('formatFixed(marketSummary.usdKrw.price, 2)', 'formatFixed(marketSummary.usdKrw.price, 0)');
+    s = s.replaceAll('formatSignedFixed(marketSummary.usdKrw.change, 2)', 'formatSignedFixed(marketSummary.usdKrw.change, 0)');
+    s = s.replaceAll('formatFixed(marketSummary.kospi.price, 2)', 'formatFixed(marketSummary.kospi.price, 0)');
+    s = s.replaceAll('formatSignedFixed(marketSummary.kospi.change, 2)', 'formatSignedFixed(marketSummary.kospi.change, 0)');
+    s = s.replaceAll('formatFixed(marketSummary.kosdaq.price, 2)', 'formatFixed(marketSummary.kosdaq.price, 0)');
+    s = s.replaceAll('formatSignedFixed(marketSummary.kosdaq.change, 2)', 'formatSignedFixed(marketSummary.kosdaq.change, 0)');
+    s = s.replaceAll('formatFixed(marketSummary.nasdaq.price, 2)', 'formatFixed(marketSummary.nasdaq.price, 0)');
+    s = s.replaceAll('formatSignedFixed(marketSummary.nasdaq.change, 2)', 'formatSignedFixed(marketSummary.nasdaq.change, 0)');
+    s = s.replaceAll('formatFixed(marketSummary.sp500.price, 2)', 'formatFixed(marketSummary.sp500.price, 0)');
+    s = s.replaceAll('formatSignedFixed(marketSummary.sp500.change, 2)', 'formatSignedFixed(marketSummary.sp500.change, 0)');
 
-  await write(path, s);
+    await write(path, s);
+  } else {
+    console.log(`${path}: header format V2 already applied`);
+  }
 }
 
 async function patchChartColumn() {
@@ -191,7 +359,7 @@ async function patchChartColumn() {
   let s = await read(path);
 
   const helpers = `
-// STOCK5_FUNDAMENTALS_UI_V1
+// STOCK5_FUNDAMENTALS_UI_V2
 function compactMetricNumber(value, digits = 1) {
   const n = Number(value);
   if (!Number.isFinite(n)) return '-';
@@ -234,34 +402,44 @@ function formatMetricRatio(value, digits = 1) {
   return Number.isFinite(Number(value)) ? compactMetricNumber(value, digits) : '-';
 }
 
-function formatMetricPercent(value, { alreadyPercent = false, signed = false } = {}) {
+function formatMetricPercent(value, { signed = false } = {}) {
   const n = Number(value);
   if (!Number.isFinite(n)) return '-';
-  const pct = alreadyPercent ? n : n * 100;
+  const pct = n * 100;
   const sign = signed && pct > 0 ? '+' : '';
   return \`\${sign}\${pct.toFixed(1)}%\`;
 }
 `;
 
-  s = insertBefore(
-    s,
-    'export default function ChartColumn(',
-    helpers,
-    'STOCK5_FUNDAMENTALS_UI_V1',
-    path,
-  );
+  if (!s.includes('STOCK5_FUNDAMENTALS_UI_V2')) {
+    if (s.includes('// STOCK5_FUNDAMENTALS_UI_V1')) {
+      const start = s.indexOf('// STOCK5_FUNDAMENTALS_UI_V1');
+      const end = s.indexOf('export default function ChartColumn(', start);
+      if (end < 0) throw new Error(`${path}: old fundamentals helper end not found`);
+      s = s.slice(0, start) + helpers + '\n' + s.slice(end);
+    } else {
+      s = insertBefore(
+        s,
+        'export default function ChartColumn(',
+        helpers,
+        'STOCK5_FUNDAMENTALS_UI_V2',
+        path,
+      );
+    }
+  }
 
-  s = insertAfter(
-    s,
-    '  const [quote, setQuote] = useState(null);\n',
-    `  const [fundamentals, setFundamentals] = useState(null);
-`,
-    'const [fundamentals, setFundamentals]',
-    path,
-  );
+  if (!s.includes('const [fundamentals, setFundamentals]')) {
+    s = insertAfter(
+      s,
+      '  const [quote, setQuote] = useState(null);\n',
+      '  const [fundamentals, setFundamentals] = useState(null);\n',
+      'const [fundamentals, setFundamentals]',
+      path,
+    );
+  }
 
   const effect = `
-  // STOCK5_FUNDAMENTALS_FETCH_V1
+  // STOCK5_FUNDAMENTALS_FETCH_V2
   useEffect(() => {
     if (!symbol) {
       setFundamentals(null);
@@ -273,6 +451,7 @@ function formatMetricPercent(value, { alreadyPercent = false, signed = false } =
 
     fetch(apiUrl(\`/fundamentals?symbol=\${encodeURIComponent(symbol)}\`), {
       signal: controller.signal,
+      cache: 'no-store',
     })
       .then(async (response) => {
         if (!response.ok) throw new Error(\`fundamentals \${response.status}\`);
@@ -292,16 +471,26 @@ function formatMetricPercent(value, { alreadyPercent = false, signed = false } =
 
 `;
 
-  s = insertBefore(
-    s,
-    '  useEffect(() => {\n    ser.current.candle?.applyOptions',
-    effect,
-    'STOCK5_FUNDAMENTALS_FETCH_V1',
-    path,
-  );
+  if (!s.includes('STOCK5_FUNDAMENTALS_FETCH_V2')) {
+    if (s.includes('// STOCK5_FUNDAMENTALS_FETCH_V1')) {
+      const start = s.indexOf('  // STOCK5_FUNDAMENTALS_FETCH_V1');
+      const endAnchor = '  useEffect(() => {\n    ser.current.candle?.applyOptions';
+      const end = s.indexOf(endAnchor, start);
+      if (end < 0) throw new Error(`${path}: old fundamentals fetch end not found`);
+      s = s.slice(0, start) + effect + s.slice(end);
+    } else {
+      s = insertBefore(
+        s,
+        '  useEffect(() => {\n    ser.current.candle?.applyOptions',
+        effect,
+        'STOCK5_FUNDAMENTALS_FETCH_V2',
+        path,
+      );
+    }
+  }
 
   const row = `        {fundamentals && (
-          <div className="fundamentals-row" title="최근 제공 재무지표">
+          <div className="fundamentals-row" title={fundamentals.source === 'naver' ? '네이버 금융 최근 확정 실적/현재 지표' : 'Yahoo Finance 최근 제공 지표'}>
             <span>시총 <b>{formatMetricMoney(fundamentals.marketCap, fundamentals.currency)}</b></span>
             <span>매출 <b>{formatMetricMoney(fundamentals.revenue, fundamentals.currency)}</b></span>
             <span>{fundamentals.operatingIncomeEstimated ? '영업익≈' : '영업익'} <b>{formatMetricMoney(fundamentals.operatingIncome, fundamentals.currency)}</b></span>
@@ -315,19 +504,17 @@ function formatMetricPercent(value, { alreadyPercent = false, signed = false } =
         )}
 `;
 
-  const symbolBlockEnd = `        )}
+  if (!s.includes('className="fundamentals-row"')) {
+    const target = `        )}
         {error && <div className="error-bar">{error}</div>}
 `;
-
-  const replacement = `        )}
+    if (!s.includes(target)) throw new Error(`${path}: symbol row target not found`);
+    s = s.replace(
+      target,
+      `        )}
 ${row}        {error && <div className="error-bar">{error}</div>}
-`;
-
-  if (!s.includes('className="fundamentals-row"')) {
-    if (!s.includes(symbolBlockEnd)) {
-      throw new Error(`${path}: symbol row target not found`);
-    }
-    s = s.replace(symbolBlockEnd, replacement);
+`,
+    );
   }
 
   await write(path, s);
@@ -337,20 +524,62 @@ async function patchCss() {
   const path = 'src/index.css';
   let s = await read(path);
 
-  // 헤더 지수 사이를 약간 띄운다.
+  // 헤더 지수 사이 간격
+  s = s.replace(/gap:\s*1px;/, 'gap: 2px; /* STOCK5_HEADER_GAP_V2 */');
+  s = s.replace(/margin:\s*0 1px 0 0;/, 'margin: 0 5px 0 3px;');
+
+  // MacBook Pro에서도 2칼럼이 화면 폭 안에 유지되도록 grid item의 min-content 폭을 제거.
   s = s.replace(
-    /\.market-summary \{([\s\S]*?)gap:\s*1px;/,
-    '.market-summary {$1gap: 2px; /* STOCK5_HEADER_GAP_V1 */',
-  );
-  s = s.replace(
-    /(\.market-item \+ \.market-item::before \{[\s\S]*?)margin:\s*0 1px 0 0;/,
-    '$1margin: 0 5px 0 3px;',
+    '@media (min-width: 768px) {\n  .dashboard-grid { grid-template-columns: repeat(2, 1fr); }\n}',
+    '@media (min-width: 768px) {\n  .dashboard-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }\n}',
   );
 
-  if (!s.includes('STOCK5_FUNDAMENTALS_STYLE_V1')) {
+  if (s.includes('.chart-column {') && !s.includes('/* STOCK5_TWO_COLUMN_WIDTH_V2 */')) {
+    s = s.replace(
+      '.chart-column {\n',
+      '.chart-column {\n  min-width: 0; /* STOCK5_TWO_COLUMN_WIDTH_V2 */\n',
+    );
+  }
+
+  // 이전 검색창 배치 패치의 180/150px을 더 작게 줄인다.
+  s = s.replace(
+    `.search-position-search {
+  flex: 1 1 180px;
+  min-width: 150px;
+}`,
+    `.search-position-search {
+  flex: 0 1 150px;
+  width: 150px;
+  min-width: 90px;
+  max-width: 150px;
+}`,
+  );
+
+  s = s.replace(
+    `.search-position-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;`,
+    `.search-position-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;`,
+  );
+
+  if (!s.includes('STOCK5_FUNDAMENTALS_STYLE_V2')) {
     s += `
 
-/* STOCK5_FUNDAMENTALS_STYLE_V1 */
+/* STOCK5_FUNDAMENTALS_STYLE_V2 */
+.column-header,
+.controls-row,
+.search-position-row {
+  min-width: 0;
+}
+
+.search-position-row .position-mini-controls {
+  min-width: 0;
+}
+
 .fundamentals-row {
   display: flex;
   align-items: baseline;
@@ -396,7 +625,7 @@ async function main() {
   await patchApp();
   await patchChartColumn();
   await patchCss();
-  console.log('OK: header number format + compact stock fundamentals row applied');
+  console.log('OK: Korean Naver fundamentals + MacBook 2-column width V2 applied');
 }
 
 main().catch((error) => {
