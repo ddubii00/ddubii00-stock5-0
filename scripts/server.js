@@ -1,11 +1,14 @@
 import process from 'node:process';
 import { existsSync } from 'node:fs';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
 import WebSocket from 'ws';
 import YahooFinance from 'yahoo-finance2';
 import { analyzeCharts } from '../api/_analyze.js';
+import { RANKING_UNIVERSES } from '../src/marketPresets.js';
 
 dotenv.config({ path: '.env.local', quiet: true });
 dotenv.config({ quiet: true });
@@ -48,6 +51,7 @@ app.use(express.json({ limit: '25mb' }));
 let krxCache = { loadedAt: 0, items: [] };
 const ohlcvCache = new Map();
 const quoteCache = new Map();
+const top100Cache = new Map();
 let kisTokenCache = { token: '', expiresAt: 0 };
 let kisApprovalCache = { key: '', expiresAt: 0 };
 const REALTIME_QUOTE_TTL_MS = 250;
@@ -1051,6 +1055,164 @@ async function fetchKoreanOhlcv(code, interval, limit) {
     .filter(x => x.open !== null && x.close !== null);
   return rows.slice(-limit);
 }
+
+// 전일 시가총액 순위는 장중 가격 변동으로 카드 순서가 바뀌지 않도록 파일에
+// 일 단위로 고정한다. 서버 재시작 후에도 같은 거래일에는 동일한 순서를 쓴다.
+const TOP100_NAVER_URL = 'https://stock.naver.com/api/stockSecurity/individual-stocks/v3/domestic';
+const TOP100_COUNTS = { kospi: 100, kosdaq: 100, nasdaq: 100, nikkei: 50 };
+
+function formatDateInZone(timeZone, date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const value = type => parts.find(part => part.type === type)?.value;
+  return `${value('year')}-${value('month')}-${value('day')}`;
+}
+
+function previousTradingDate(market) {
+  const timeZone = market === 'nasdaq' ? 'America/New_York' : market === 'nikkei' ? 'Asia/Tokyo' : 'Asia/Seoul';
+  const date = new Date(`${formatDateInZone(timeZone)}T12:00:00Z`);
+  do {
+    date.setUTCDate(date.getUTCDate() - 1);
+  } while (date.getUTCDay() === 0 || date.getUTCDay() === 6);
+  return date.toISOString().slice(0, 10);
+}
+
+function top100SnapshotPath() {
+  return path.resolve(process.env.STOCK5_DATA_DIR || 'data', 'stock5-0-top100.json');
+}
+
+async function readTop100Snapshots() {
+  const file = top100SnapshotPath();
+  if (!existsSync(file)) return {};
+  try {
+    const parsed = JSON.parse(await readFile(file, 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function saveTop100Snapshots(snapshots) {
+  const file = top100SnapshotPath();
+  await mkdir(path.dirname(file), { recursive: true });
+  const temp = `${file}.${process.pid}.tmp`;
+  await writeFile(temp, JSON.stringify(snapshots, null, 2), 'utf8');
+  await rename(temp, file);
+}
+
+async function fetchKoreanTop100(market) {
+  const suffix = market === 'kosdaq' ? 'KQ' : 'KS';
+  const items = [];
+  const seen = new Set();
+  for (let index = 0; index < 5 && items.length < 100; index += 1) {
+    const params = new URLSearchParams({
+      listingType: 'marketCapDesc',
+      exchangeType: 'krx',
+      marketType: market === 'kosdaq' ? 'KOSDAQ' : 'KOSPI',
+      index: String(index),
+      size: '50',
+    });
+    const response = await fetch(`${TOP100_NAVER_URL}?${params}`, {
+      headers: { 'Accept-Language': 'ko-KR,ko;q=0.9', 'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache' },
+    });
+    if (!response.ok) throw new Error(`국내 시가총액 순위 조회 실패 (${response.status})`);
+    const rows = (await response.json())?.items || [];
+    for (const row of rows) {
+      const code = String(row?.itemCode || '').trim();
+      const name = String(row?.itemName || row?.stockName || row?.name || '').trim();
+      if (!/^\d{6}$/.test(code) || !name || seen.has(code)) continue;
+      seen.add(code);
+      items.push({ symbol: `${code}.${suffix}`, name });
+      if (items.length === 100) break;
+    }
+  }
+  if (items.length !== 100) throw new Error(`국내 시가총액 목록이 ${items.length}개입니다.`);
+  return items;
+}
+
+function previousCloseMarketCap(quote) {
+  const shares = Number(quote?.sharesOutstanding ?? quote?.impliedSharesOutstanding);
+  const previousClose = Number(quote?.regularMarketPreviousClose);
+  if (Number.isFinite(shares) && Number.isFinite(previousClose) && shares > 0 && previousClose > 0) {
+    return shares * previousClose;
+  }
+  const marketCap = Number(quote?.marketCap);
+  return Number.isFinite(marketCap) && marketCap > 0 ? marketCap : null;
+}
+
+async function fetchForeignTop100(market) {
+  const universe = [...new Set(RANKING_UNIVERSES[market] || [])];
+  const expected = TOP100_COUNTS[market];
+  if (universe.length < expected) throw new Error(`${market} 종목 유니버스가 부족합니다.`);
+  const rows = await Promise.all(universe.map(async (symbol) => {
+    try {
+      const quote = await yahooCall(() => yahooFinance.quote(symbol));
+      const marketCap = previousCloseMarketCap(quote);
+      if (!marketCap) return null;
+      return {
+        symbol,
+        name: String(quote?.shortName || quote?.longName || quote?.displayName || symbol),
+        marketCap,
+      };
+    } catch (error) {
+      console.warn(`Top100 quote unavailable [${symbol}]:`, error.message);
+      return null;
+    }
+  }));
+  const ranked = rows
+    .filter(Boolean)
+    .sort((a, b) => b.marketCap - a.marketCap)
+    .slice(0, expected)
+    .map(({ symbol, name }) => ({ symbol, name }));
+  if (ranked.length !== expected) throw new Error(`${market} 전일 시가총액 목록이 ${ranked.length}개입니다.`);
+  return ranked;
+}
+
+async function loadTop100Snapshot(market) {
+  const snapshotDate = previousTradingDate(market);
+  const cacheKey = `${market}:${snapshotDate}`;
+  if (top100Cache.has(cacheKey)) return top100Cache.get(cacheKey);
+
+  const snapshots = await readTop100Snapshots();
+  const stored = snapshots?.[cacheKey];
+  if (stored?.snapshotDate === snapshotDate && Array.isArray(stored.items) && stored.items.length === TOP100_COUNTS[market]) {
+    top100Cache.set(cacheKey, stored);
+    return stored;
+  }
+
+  const items = market === 'kospi' || market === 'kosdaq'
+    ? await fetchKoreanTop100(market)
+    : await fetchForeignTop100(market);
+  const snapshot = {
+    market,
+    snapshotDate,
+    fetchedAt: new Date().toISOString(),
+    items: items.map((item, index) => ({ ...item, rank: index + 1 })),
+  };
+  snapshots[cacheKey] = snapshot;
+  await saveTop100Snapshots(snapshots);
+  top100Cache.set(cacheKey, snapshot);
+  return snapshot;
+}
+
+app.get('/api/top100', async (req, res) => {
+  try {
+    const market = String(req.query.market || '').trim().toLowerCase();
+    if (!Object.hasOwn(TOP100_COUNTS, market)) {
+      return res.status(400).json({ error: 'market must be kospi, kosdaq, nasdaq, or nikkei' });
+    }
+    const snapshot = await loadTop100Snapshot(market);
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    return res.json({ ...snapshot, count: snapshot.items.length });
+  } catch (error) {
+    console.error('Top100 error:', error.message);
+    return res.status(502).json({ error: error.message });
+  }
+});
 
 app.get('/api/search', async (req, res) => {
   try {

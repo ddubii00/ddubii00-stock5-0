@@ -613,6 +613,16 @@ function normalizeCandleData(arr) {
   rows.forEach(d => unique.set(timeKey(d.time), d));
   return [...unique.values()];
 }
+
+// 메인/일목 차트는 반드시 동일한 원본 봉을 표시해야 한다. 장외·휴장 봉을
+// 한쪽에서만 제거하면 두 캔들이 달라지고, 일목선도 다른 가격을 기준으로 계산된다.
+function normalizeChartCandles(arr, symbol, tf) {
+  return filterDailyTradingCandles(
+    filterKoreanRegularIntraday(normalizeCandleData(arr), symbol, tf),
+    symbol,
+    tf,
+  );
+}
 function safeLineData(arr) {
   return arr.filter(d => d != null && Number.isFinite(d.value));
 }
@@ -1528,25 +1538,30 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
 
   const fetchQuote = useCallback(async (sym, signal) => {
     if (!sym) return;
+    let quoteData = null;
     const quoteResponse = await fetch(apiUrl(`/quote?symbol=${encodeURIComponent(sym)}`), { signal });
     const quoteContentType = quoteResponse.headers.get('content-type') || '';
     if (quoteResponse.ok && quoteContentType.includes('application/json')) {
-      const quoteData = await quoteResponse.json();
-      if (Number.isFinite(Number(quoteData?.price))) {
-        setQuote({ ...quoteData, symbol: sym });
-        return;
-      }
+      const candidate = await quoteResponse.json();
+      if (Number.isFinite(Number(candidate?.price))) quoteData = candidate;
     }
 
     const realtimeKorean = isKoreanSymbol(sym) && isMarketUpdateWindow(sym);
     const dailyUrl = apiUrl(`/ohlcv?symbol=${encodeURIComponent(sym)}&interval=day&limit=6`);
     const response = await fetch(dailyUrl, { signal });
     const contentType = response.headers.get('content-type') || '';
-    if (!response.ok || !contentType.includes('application/json')) return;
+    if (!response.ok || !contentType.includes('application/json')) {
+      if (quoteData) setQuote({ ...quoteData, symbol: sym });
+      return;
+    }
     const data = await response.json();
-    const candles = filterDailyTradingCandles(normalizeCandleData(data), sym, { interval: 'day' });
+    const candles = normalizeChartCandles(data, sym, { interval: 'day' });
 
-    let nextQuote = buildQuoteFromCandles(candles);
+    // 종목명 오른쪽 등락률은 일봉의 전일 종가를 기준으로 계산한다. 일부
+    // 실시간 Quote 공급원이 changePct=0을 보내도 캔들과 동일한 값이 표시된다.
+    let nextQuote = quoteData
+      ? buildQuoteFromIntradayPrice(quoteData.price, candles)
+      : buildQuoteFromCandles(candles);
     if (realtimeKorean) {
       const minuteResponse = await fetch(apiUrl(`/ohlcv?symbol=${encodeURIComponent(sym)}&interval=1m&limit=5`), { signal });
       const minuteContentType = minuteResponse.headers.get('content-type') || '';
@@ -1558,7 +1573,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
       }
     }
 
-    if (nextQuote) setQuote({ ...nextQuote, symbol: sym });
+    if (nextQuote) setQuote({ ...quoteData, ...nextQuote, symbol: sym });
   }, []);
 
   // ─── 메인 3개 차트 데이터 로드 ───────────────────────
@@ -1579,8 +1594,8 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
       throw new Error(`${tf.label} 데이터가 비어 있습니다.`);
     }
 
-    // ② null 값 필터링
-    const candles = normalizeCandleData(data);
+    // 메인과 일목 차트가 같은 장중/휴장 필터를 거치도록 통일한다.
+    const candles = normalizeChartCandles(data, sym, tf);
     if (!candles.length) throw new Error('시세 데이터가 비어 있습니다.');
     crosshairValueMapsRef.current = { candle: new Map(), volume: new Map(), macd: new Map() };
     mainCandlesRef.current = candles;
@@ -1684,11 +1699,14 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
       return;
     }
 
-    const candles = filterDailyTradingCandles(
-      filterKoreanRegularIntraday(normalizeCandleData(data), sym, tf),
-      sym,
-      tf
-    );
+    let candles = normalizeChartCandles(data, sym, tf);
+    // 일목 차트는 계산에 더 긴 과거 데이터가 필요하지만, 화면에 보이는 최근
+    // 봉은 메인 캔들 차트가 이미 사용한 정확한 원본으로 덮어쓴다.
+    if (tf.interval === mainTf.interval && mainCandlesRef.current.length) {
+      const merged = new Map(candles.map(candle => [timeKey(candle.time), candle]));
+      mainCandlesRef.current.forEach(candle => merged.set(timeKey(candle.time), candle));
+      candles = [...merged.values()].sort((a, b) => (a.time > b.time ? 1 : a.time < b.time ? -1 : 0));
+    }
     if (!candles.length) throw new Error('일목균형표 데이터가 비어 있습니다.');
     const ichi = calculateIchimoku(candles);
     const visibleCount = Math.min(Math.max(Number(lim) || ichiLimit, 1), candles.length);
@@ -1747,7 +1765,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
       }
       drawCloud(spanAData, spanBData);
     });
-  }, [drawCloud, ichiLimit]);
+  }, [drawCloud, ichiLimit, mainTf.interval]);
 
   // 차트 시리즈 초기화 완료 직후에도 최초 데이터를 즉시 불러온다.
   useEffect(() => {

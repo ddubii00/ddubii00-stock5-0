@@ -61,6 +61,13 @@ function koreanCode(symbol) {
   return String(symbol || '').match(/^(\d{6})\.(KS|KQ)$/)?.[1] || null;
 }
 
+const RANKED_MARKET_VIEWS = {
+  kospi100: 'kospi',
+  kosdaq100: 'kosdaq',
+  nasdaq100: 'nasdaq',
+  nikkei50: 'nikkei',
+};
+
 function LazyChartColumn(props) {
   const holderRef = useRef(null);
   const [active, setActive] = useState(() => typeof IntersectionObserver === 'undefined');
@@ -100,14 +107,53 @@ function App() {
   });
   const [showBollinger, setShowBollinger] = useState(false);
   const [resolvedNames, setResolvedNames] = useState({});
+  const [rankedGroups, setRankedGroups] = useState({});
+  const [rankedLoading, setRankedLoading] = useState({});
+  const [rankedErrors, setRankedErrors] = useState({});
+  const rankedRequestRef = useRef({});
 
   useEffect(() => {
     document.title = 'stock5-0 지수정보';
   }, []);
 
-  const sourceItems = view === 'index'
-    ? INDEX_ITEMS
-    : GROUPS[view].items;
+  const loadRankedGroup = useCallback(async (groupKey, signal) => {
+    const market = RANKED_MARKET_VIEWS[groupKey];
+    if (!market) return;
+    const requestId = (rankedRequestRef.current[groupKey] || 0) + 1;
+    rankedRequestRef.current[groupKey] = requestId;
+    setRankedLoading(current => ({ ...current, [groupKey]: true }));
+    setRankedErrors(current => ({ ...current, [groupKey]: '' }));
+    try {
+      const response = await fetch(apiUrl(`/top100?market=${market}`), { signal, cache: 'no-store' });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error || `Top 종목 조회 실패 (${response.status})`);
+      const expected = groupKey === 'nikkei50' ? 50 : 100;
+      const items = Array.isArray(payload?.items) ? payload.items.slice(0, expected) : [];
+      if (items.length !== expected || items.some(item => !item?.symbol || !item?.name)) {
+        throw new Error(`전일 시가총액 목록이 ${items.length}개입니다.`);
+      }
+      if (rankedRequestRef.current[groupKey] === requestId) {
+        setRankedGroups(current => ({ ...current, [groupKey]: items }));
+      }
+    } catch (error) {
+      if (error?.name !== 'AbortError' && rankedRequestRef.current[groupKey] === requestId) {
+        setRankedErrors(current => ({ ...current, [groupKey]: error?.message || 'Top 종목 조회 실패' }));
+      }
+    } finally {
+      if (rankedRequestRef.current[groupKey] === requestId) {
+        setRankedLoading(current => ({ ...current, [groupKey]: false }));
+      }
+    }
+  }, []);
+
+  const rankedView = Object.hasOwn(RANKED_MARKET_VIEWS, view);
+  const sourceItems = useMemo(() => (
+    view === 'index'
+      ? INDEX_ITEMS
+      : rankedView
+        ? (rankedGroups[view] || [])
+        : GROUPS[view].items
+  ), [rankedGroups, rankedView, view]);
 
   const selectedItems = useMemo(
     () => sourceItems.map((item) => {
@@ -122,11 +168,19 @@ function App() {
   const isLazyGroup = view !== 'index';
 
   const handleViewChange = (event) => {
-    setView(event.target.value);
+    const nextView = event.target.value;
+    setView(nextView);
     // ChartColumn의 localStorage가 프리셋 종목을 덮어쓰지 않도록
     // 그룹 전환 시 새로운 storage key로 다시 마운트한다.
     setPresetVersion(version => version + 1);
   };
+
+  useEffect(() => {
+    if (!rankedView || rankedGroups[view] || rankedLoading[view]) return undefined;
+    const controller = new AbortController();
+    void loadRankedGroup(view, controller.signal);
+    return () => controller.abort();
+  }, [loadRankedGroup, rankedGroups, rankedLoading, rankedView, view]);
 
   const fetchQuote = useCallback(async (symbol, signal) => {
     const response = await fetch(
@@ -357,6 +411,12 @@ function App() {
       </header>
 
       <div className="dashboard-grid">
+        {rankedView && rankedLoading[view] && selectedItems.length === 0 && (
+          <div className="top100-status">전일 시가총액 순위 불러오는 중...</div>
+        )}
+        {rankedView && !rankedLoading[view] && rankedErrors[view] && selectedItems.length === 0 && (
+          <div className="top100-status error">{rankedErrors[view]}</div>
+        )}
         {selectedItems.map((item, index) => {
           const Component = isLazyGroup ? LazyChartColumn : ChartColumn;
           return <Component

@@ -798,6 +798,23 @@ html, body {
   white-space: pre;
 }
 
+.top100-status {
+  grid-column: 1 / -1;
+  padding: 24px;
+  text-align: center;
+  color: #64748b;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.top100-status.error {
+  color: #b91c1c;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
 /* ── SCROLLBAR ── */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }

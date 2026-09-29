@@ -1,5 +1,10 @@
+import YahooFinance from 'yahoo-finance2';
+import { RANKING_UNIVERSES } from '../src/marketPresets.js';
+
 const NAVER_TOP100_API_URL =
   'https://stock.naver.com/api/stockSecurity/individual-stocks/v3/domestic';
+const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
+const COUNT_BY_MARKET = { kospi: 100, kosdaq: 100, nasdaq: 100, nikkei: 50 };
 
 async function fetchPage(market, pageIndex) {
   const params = new URLSearchParams({
@@ -63,14 +68,52 @@ async function loadTop100(market) {
   }));
 }
 
+function previousCloseMarketCap(quote) {
+  const shares = Number(quote?.sharesOutstanding ?? quote?.impliedSharesOutstanding);
+  const previousClose = Number(quote?.regularMarketPreviousClose);
+  if (Number.isFinite(shares) && Number.isFinite(previousClose) && shares > 0 && previousClose > 0) {
+    return shares * previousClose;
+  }
+  const marketCap = Number(quote?.marketCap);
+  return Number.isFinite(marketCap) && marketCap > 0 ? marketCap : null;
+}
+
+async function loadForeignTop100(market) {
+  const expected = COUNT_BY_MARKET[market];
+  const symbols = [...new Set(RANKING_UNIVERSES[market] || [])];
+  const rows = await Promise.all(symbols.map(async (symbol) => {
+    try {
+      const quote = await yahooFinance.quote(symbol);
+      const marketCap = previousCloseMarketCap(quote);
+      if (!marketCap) return null;
+      return {
+        symbol,
+        name: String(quote?.shortName || quote?.longName || quote?.displayName || symbol),
+        marketCap,
+      };
+    } catch {
+      return null;
+    }
+  }));
+  const items = rows
+    .filter(Boolean)
+    .sort((a, b) => b.marketCap - a.marketCap)
+    .slice(0, expected)
+    .map(({ symbol, name }, index) => ({ symbol, name, rank: index + 1 }));
+  if (items.length !== expected) throw new Error(`${market} Top 목록이 ${items.length}개입니다.`);
+  return items;
+}
+
 export default async function handler(req, res) {
   try {
     const market = String(req.query?.market || '').trim().toLowerCase();
-    if (market !== 'kospi' && market !== 'kosdaq') {
-      return res.status(400).json({ error: 'market must be kospi or kosdaq' });
+    if (!Object.hasOwn(COUNT_BY_MARKET, market)) {
+      return res.status(400).json({ error: 'market must be kospi, kosdaq, nasdaq, or nikkei' });
     }
 
-    const items = await loadTop100(market);
+    const items = market === 'kospi' || market === 'kosdaq'
+      ? await loadTop100(market)
+      : await loadForeignTop100(market);
 
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     return res.status(200).json({
