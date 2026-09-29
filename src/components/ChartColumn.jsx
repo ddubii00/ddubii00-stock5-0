@@ -40,7 +40,7 @@ const MA_COLORS  = ['#f59e0b', '#22c55e', '#a855f7', '#06b6d4', '#64748b'];
 const INTRA_INTERVALS = ['1m','3m','5m','15m','30m','60m'];
 const PRICE_SCALE_WIDTH = 92;
 const ICHIMOKU_DISPLACEMENT = 26;
-const CHART_POLL_INTERVAL_MS = 20_000;
+const CHART_POLL_INTERVAL_MS = 15_000;
 
 // ④ 마지막 종가 수평 점선 제거를 위한 헬퍼
 const NO_PRICE_LINE = { priceLineVisible: false, lastValueVisible: false };
@@ -74,13 +74,6 @@ function isKoreanMarketSymbol(symbol) {
 
 function isIndexSymbol(symbol) {
   return String(symbol || '').startsWith('^');
-}
-
-function supportsKisRealtimeStream(symbol) {
-  const value = String(symbol || '').toUpperCase();
-  if (isKoreanSymbol(value)) return true;
-  if (value === '^KS11' || value === '^KQ11') return true;
-  return Boolean(value) && !value.startsWith('^') && !value.includes('=');
 }
 
 function symbolTimeZone(symbol) {
@@ -1537,6 +1530,10 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
     drawMacdBackground();
   }, [drawMacdBackground, mainTf]);
 
+  // 실시간 스트림은 사용하지 않지만, 이 레거시 보조 함수는 차트 상태 복원
+  // 호환성을 위해 유지한다. 실제 갱신은 아래 REST 폴링 효과만 사용한다.
+  void applyRealtimeQuote;
+
   const fetchQuote = useCallback(async (sym, signal) => {
     if (!sym) return;
     let quoteData = null;
@@ -1835,31 +1832,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
     };
   }, [symbol, chartsReady, fetchQuote]);
 
-  useEffect(() => {
-    if (!symbol || !chartsReady || !supportsKisRealtimeStream(symbol)) return undefined;
-    const stream = new EventSource(apiUrl(`/stream/quote?symbol=${encodeURIComponent(symbol)}`));
-
-    const handleQuote = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload?.quote) applyRealtimeQuote(payload.quote);
-      } catch (e) {
-        console.warn('Realtime quote parse failed:', e);
-      }
-    };
-
-    stream.addEventListener('quote', handleQuote);
-    stream.onerror = () => {
-      // EventSource reconnects automatically; REST polling remains as fallback.
-    };
-
-    return () => {
-      stream.removeEventListener('quote', handleQuote);
-      stream.close();
-    };
-  }, [symbol, chartsReady, applyRealtimeQuote]);
-
-  // ⑧ 실시간 업데이트: 최신 캔들을 3초마다 따라가게 갱신
+  // WebSocket/SSE 없이 REST 폴링으로만 최신 캔들을 갱신한다.
   useEffect(() => {
     if (!symbol || !chartsReady) return;
     const t = setInterval(() => {
