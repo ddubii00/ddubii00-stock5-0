@@ -67,6 +67,7 @@ const RANKED_MARKET_VIEWS = {
   nasdaq100: 'nasdaq',
   nikkei50: 'nikkei',
 };
+const MARKET_SUMMARY_POLL_MS = 20_000;
 
 function LazyChartColumn(props) {
   const holderRef = useRef(null);
@@ -227,7 +228,7 @@ function App() {
           return;
         }
         update();
-      }, isKrxUpdateWindow() ? 1000 : 3000);
+      }, MARKET_SUMMARY_POLL_MS);
     }
 
     return () => {

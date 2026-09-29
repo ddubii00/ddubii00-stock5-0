@@ -40,6 +40,7 @@ const MA_COLORS  = ['#f59e0b', '#22c55e', '#a855f7', '#06b6d4', '#64748b'];
 const INTRA_INTERVALS = ['1m','3m','5m','15m','30m','60m'];
 const PRICE_SCALE_WIDTH = 92;
 const ICHIMOKU_DISPLACEMENT = 26;
+const CHART_POLL_INTERVAL_MS = 20_000;
 
 // ④ 마지막 종가 수평 점선 제거를 위한 헬퍼
 const NO_PRICE_LINE = { priceLineVisible: false, lastValueVisible: false };
@@ -1825,7 +1826,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
           return;
         }
         updateQuote();
-      }, isKoreanSymbol(symbol) ? 700 : 3000);
+      }, CHART_POLL_INTERVAL_MS);
     }
 
     return () => {
@@ -1861,21 +1862,17 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
   // ⑧ 실시간 업데이트: 최신 캔들을 3초마다 따라가게 갱신
   useEffect(() => {
     if (!symbol || !chartsReady) return;
-    const isIntra = INTRA_INTERVALS.includes(mainTf.interval);
-    const ms = isIntra ? (isKoreanSymbol(symbol) ? 1000 : 3000) : 5000;
     const t = setInterval(() => {
-      if (isMarketUpdateWindow(symbol)) fetchMain(symbol, mainTf, limit, { followLatest: isIntra }).catch(() => {});
-    }, ms);
+      if (isMarketUpdateWindow(symbol)) fetchMain(symbol, mainTf, limit, { followLatest: isIntradayTf(mainTf) }).catch(() => {});
+    }, CHART_POLL_INTERVAL_MS);
     return () => clearInterval(t);
   }, [symbol, mainTf, limit, chartsReady, fetchMain]);
 
   useEffect(() => {
     if (!symbol || !chartsReady) return;
-    const isIntra = INTRA_INTERVALS.includes(ichiTf.interval);
-    const ms = isIntra ? (isKoreanSymbol(symbol) ? 1000 : 3000) : 5000;
     const t = setInterval(() => {
       if (isMarketUpdateWindow(symbol)) fetchIchi(symbol, ichiTf, ichiLimit).catch(() => {});
-    }, ms);
+    }, CHART_POLL_INTERVAL_MS);
     return () => clearInterval(t);
   }, [symbol, ichiTf, ichiLimit, chartsReady, fetchIchi]);
 
