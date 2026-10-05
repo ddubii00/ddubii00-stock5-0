@@ -8,6 +8,9 @@ import {
 } from 'lightweight-charts';
 import { calculateMACD, calculateIchimoku, calculateMA, calculateBollingerBands, buildTimeMap } from '../utils/indicators';
 import StockSearch from './StockSearch';
+import TrendLineOverlay from './TrendLineOverlay';
+import { useChartTimeframe } from '../utils/chartTimeframe';
+import { cleanTrendLines } from '../utils/trendLines';
 import { apiUrl } from '../api';
 
 const MAIN_TFS = [
@@ -35,8 +38,8 @@ const ICHI_TFS = [
 ];
 const DEFAULT_ICHI_TF = ICHI_TFS.find(tf => tf.interval === 'day') || ICHI_TFS[0];
 
-const MA_PERIODS = [5, 10, 20, 60, 120];
-const MA_COLORS  = ['#f59e0b', '#22c55e', '#a855f7', '#06b6d4', '#64748b'];
+const MA_PERIODS = [5, 10, 20, 60, 120, 200];
+const MA_COLORS  = ['#f59e0b', '#22c55e', '#a855f7', '#06b6d4', '#64748b', '#92400e'];
 const INTRA_INTERVALS = ['1m','3m','5m','15m','30m','60m'];
 const PRICE_SCALE_WIDTH = 92;
 const ICHIMOKU_DISPLACEMENT = 26;
@@ -849,7 +852,31 @@ const BASE_OPTS = {
   },
 };
 
-export default function ChartColumn({ id, defaultSymbol, defaultName, showBollinger = false, useStoredSelection = true }) {
+function loadTrendLines(symbol) {
+  try {
+    return cleanTrendLines(JSON.parse(localStorage.getItem(`stock5-0-trend-lines:${symbol}`) || '{}'));
+  } catch {
+    return {};
+  }
+}
+
+function useSavedTrendLines(symbol) {
+  const [state, setState] = useState(() => ({ symbol, lines: loadTrendLines(symbol) }));
+  const current = state.symbol === symbol ? state : { symbol, lines: loadTrendLines(symbol) };
+  if (current !== state) setState(current);
+  const save = (key, lines) => {
+    const next = cleanTrendLines({ ...current.lines, [key]: lines });
+    setState({ symbol, lines: next });
+    try {
+      localStorage.setItem(`stock5-0-trend-lines:${symbol}`, JSON.stringify(next));
+    } catch (error) {
+      console.warn('추세선 저장 실패:', error);
+    }
+  };
+  return [current.lines, save];
+}
+
+export default function ChartColumn({ id, defaultSymbol, defaultName, showBollinger = false, globalWeekly = false, useStoredSelection = true }) {
   // 프리셋 차트는 이전 검색 종목(localStorage) 대신 지정된 지수를 우선 사용한다.
   const storageKey = `stock5_symbol_${id}`;
   const storedRaw = useStoredSelection ? localStorage.getItem(storageKey) : null;
@@ -863,8 +890,9 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
 
   const [symbol,     setSymbol]     = useState(stored?.symbol || defaultSymbol || null);
   const [symbolName, setSymbolName] = useState(stored?.name   || defaultName   || '');
-  const [mainTf,     setMainTf]     = useState(MAIN_TFS[6]);   // 일봉 default
-  const [ichiTf,     setIchiTf]     = useState(DEFAULT_ICHI_TF); // 일봉 default
+  const [mainTf, setMainTf] = useChartTimeframe(MAIN_TFS[6], MAIN_TFS[7], globalWeekly);
+  const [ichiTf, setIchiTf] = useChartTimeframe(DEFAULT_ICHI_TF, ICHI_TFS[7], globalWeekly);
+  const [trendLines, saveTrendLines] = useSavedTrendLines(symbol);
   const [limit,      setLimit]      = useState(120);
   const [limitInput, setLimitInput] = useState('120');
   const [ichiLimit,  setIchiLimit]  = useState(120);
@@ -886,6 +914,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
     ma20: true,
     ma60: true,
     ma120: true,
+    ma200: true,
   });
   const [ichiVisible, setIchiVisible] = useState({
     candle: true,
@@ -915,6 +944,9 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
   const maMaps      = useRef([]);
   const macdDataRef = useRef([]);   // ③ MACD 데이터 저장
   const mainCandlesRef = useRef([]);
+  const mainDataKeyRef = useRef('');
+  const mainRequestRef = useRef(0);
+  const ichiRequestRef = useRef(0);
   const mainVolumeRef = useRef([]);
   const crosshairValueMapsRef = useRef({ candle: new Map(), volume: new Map(), macd: new Map() });
   const ichiValueMapsRef = useRef({
@@ -958,7 +990,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
     ser.current.bollingerUpper?.applyOptions({ visible: showBollinger });
     ser.current.bollingerMiddle?.applyOptions({ visible: showBollinger });
     ser.current.bollingerLower?.applyOptions({ visible: showBollinger });
-  }, [showBollinger]);
+  }, [showBollinger, chartsReady]);
 
   useEffect(() => {
     ser.current.ichiCandle?.applyOptions({ visible: ichiVisible.candle });
@@ -1226,7 +1258,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
                 const changePctColor = Number.isFinite(changePct)
                   ? (changePct >= 0 ? '#dc2626' : '#1565c0')
                   : color;
-                const maRows = MA_PERIODS.slice(0, 4).map((p, idx) => {
+                const maRows = MA_PERIODS.map((p, idx) => {
                   const val = maMaps.current[idx]?.get(tk);
                   return val != null
                     ? `<span class="tt-ma" style="color:${MA_COLORS[idx]}">${p} <b>${formatPriceLabel(val, symbolRef.current)}</b></span>`
@@ -1328,6 +1360,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
         if (ref.current) chart.applyOptions({ width: ref.current.clientWidth });
       });
       drawMacdBackground();
+      priceRef.current?.dispatchEvent(new Event('trend-data'));
     };
     window.addEventListener('resize', onResize);
 
@@ -1577,6 +1610,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
   // ─── 메인 3개 차트 데이터 로드 ───────────────────────
   const fetchMain = useCallback(async (sym, tf, lim, { followLatest = false } = {}) => {
     if (!sym || !ser.current.candle) return;
+    const requestId = ++mainRequestRef.current;
     const viewKey = `${sym}:${tf.interval}:${lim}`;
     const r    = await fetch(apiUrl(`/ohlcv?symbol=${encodeURIComponent(sym)}&interval=${tf.interval}&limit=${requestLimit(tf, lim)}`));
     const contentType = r.headers.get('content-type') || '';
@@ -1588,6 +1622,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
       throw new Error('시세 API가 JSON 대신 HTML을 반환했습니다. 배포 API 연결을 확인하세요.');
     }
     const data = await r.json();
+    if (mainRequestRef.current !== requestId || !ser.current.candle) return;
     if (!Array.isArray(data) || !data.length) {
       throw new Error(`${tf.label} 데이터가 비어 있습니다.`);
     }
@@ -1597,6 +1632,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
     if (!candles.length) throw new Error('시세 데이터가 비어 있습니다.');
     crosshairValueMapsRef.current = { candle: new Map(), volume: new Map(), macd: new Map() };
     mainCandlesRef.current = candles;
+    mainDataKeyRef.current = `${sym}:${tf.interval}`;
     ser.current.candle.setData(candles);
     crosshairValueMapsRef.current.candle = new Map(candles.map(d => [timeKey(d.time), d.close]));
 
@@ -1652,6 +1688,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
 
     // ③ MACD 배경 그리기 (약간 지연 → 차트 렌더 후)
     requestAnimationFrame(() => {
+      if (mainRequestRef.current !== requestId) return;
       if (mainViewKeyRef.current !== viewKey || followLatest) {
         const visibleBars = Math.min(lim, candles.length);
         const range = {
@@ -1664,11 +1701,13 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
         mainViewKeyRef.current = viewKey;
       }
       drawMacdBackground();
+      priceRef.current?.dispatchEvent(new Event('trend-data'));
     });
   }, [drawMacdBackground]);
 
   const fetchIchi = useCallback(async (sym, tf, lim) => {
     if (!sym || !ser.current.ichiCandle) return;
+    const requestId = ++ichiRequestRef.current;
     const r    = await fetch(apiUrl(`/ohlcv?symbol=${encodeURIComponent(sym)}&interval=${tf.interval}&limit=${ichimokuRequestLimit(tf, lim)}`));
     const contentType = r.headers.get('content-type') || '';
     if (!r.ok) {
@@ -1679,6 +1718,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
       throw new Error('시세 API가 JSON 대신 HTML을 반환했습니다. 배포 API 연결을 확인하세요.');
     }
     const data = await r.json();
+    if (ichiRequestRef.current !== requestId || !ser.current.ichiCandle) return;
     if (!Array.isArray(data) || !data.length) {
       ser.current.ichiCandle.setData([]);
       ser.current.tenkan.setData([]);
@@ -1700,7 +1740,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
     let candles = normalizeChartCandles(data, sym, tf);
     // 일목 차트는 계산에 더 긴 과거 데이터가 필요하지만, 화면에 보이는 최근
     // 봉은 메인 캔들 차트가 이미 사용한 정확한 원본으로 덮어쓴다.
-    if (tf.interval === mainTf.interval && mainCandlesRef.current.length) {
+    if (mainDataKeyRef.current === `${sym}:${tf.interval}` && mainCandlesRef.current.length) {
       const merged = new Map(candles.map(candle => [timeKey(candle.time), candle]));
       mainCandlesRef.current.forEach(candle => merged.set(timeKey(candle.time), candle));
       candles = [...merged.values()].sort((a, b) => (a.time > b.time ? 1 : a.time < b.time ? -1 : 0));
@@ -1750,6 +1790,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
 
     const viewKey = `${sym}:${tf.interval}:${visibleCount}`;
     requestAnimationFrame(() => {
+      if (ichiRequestRef.current !== requestId) return;
       if (ichiViewKeyRef.current !== viewKey) {
         try {
           charts.current.ichi?.timeScale().setVisibleLogicalRange({
@@ -1763,7 +1804,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
       }
       drawCloud(spanAData, spanBData);
     });
-  }, [drawCloud, ichiLimit, mainTf.interval]);
+  }, [drawCloud, ichiLimit]);
 
   // 차트 시리즈 초기화 완료 직후에도 최초 데이터를 즉시 불러온다.
   useEffect(() => {
@@ -1786,6 +1827,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      mainRequestRef.current += 1;
     };
   }, [symbol, mainTf, limit, chartsReady, fetchMain]);
 
@@ -1795,7 +1837,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
     fetchIchi(symbol, ichiTf, ichiLimit).catch(error => {
       console.warn(`일목균형표 초기 로드 실패 [${symbol}]`, error);
     });
-    return undefined;
+    return () => { ichiRequestRef.current += 1; };
   }, [symbol, ichiTf, ichiLimit, chartsReady, fetchIchi]);
 
   useEffect(() => {
@@ -2021,6 +2063,12 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
             <span className="legend-swatch" style={{ backgroundColor: MA_COLORS[i] }} />{p}
           </button>
         ))}
+        <span
+          className={`legend-btn bollinger-legend${showBollinger ? '' : ' muted'}`}
+          title="볼린저밴드: 20기간 이동평균 ± 2 표준편차. 헤더 BB 버튼으로 전체 차트 표시/숨김"
+        >
+          <span className="legend-swatch bollinger" aria-hidden="true" />볼린저밴드
+        </span>
       </div>
 
       {/* 차트 영역 */}
@@ -2028,6 +2076,13 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
         <div ref={priceSectionRef} className="chart-section" style={{ position: 'relative' }}>
           <div className="chart-label">캔들차트</div>
           <div ref={priceRef} />
+          <TrendLineOverlay
+            key={`${symbol}:${mainTf.interval}`}
+            chartsRef={charts} seriesRef={ser} candlesRef={mainCandlesRef}
+            containerRef={priceRef} ready={chartsReady && !loading}
+            lines={trendLines[`${symbol}:${mainTf.interval}`] || []}
+            onChange={lines => saveTrendLines(`${symbol}:${mainTf.interval}`, lines)}
+          />
           {/* ③ MACD 배경 캔버스는 priceRef 안에 동적 삽입 */}
           {/* ⑤⑨ OHLC + MA 팝업 */}
           <div ref={tooltipRef} className="price-tooltip" />

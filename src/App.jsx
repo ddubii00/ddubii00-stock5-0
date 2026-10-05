@@ -107,6 +107,7 @@ function App() {
     usdKrw: null,
   });
   const [showBollinger, setShowBollinger] = useState(false);
+  const [globalWeekly, setGlobalWeekly] = useState(false);
   const [resolvedNames, setResolvedNames] = useState({});
   const [rankedGroups, setRankedGroups] = useState({});
   const [rankedLoading, setRankedLoading] = useState({});
@@ -409,6 +410,15 @@ function App() {
         >
           BB
         </button>
+        <button
+          type="button"
+          className={`header-bb-button${globalWeekly ? ' active' : ''}`}
+          onClick={() => setGlobalWeekly(enabled => !enabled)}
+          title="전체 캔들·일목 주봉 전환 (개별 봉 선택 가능). 끄면 이전 주기로 복원"
+          aria-pressed={globalWeekly}
+        >
+          주
+        </button>
       </header>
 
       <div className="dashboard-grid">
@@ -426,6 +436,7 @@ function App() {
             defaultSymbol={item.symbol}
             defaultName={item.name}
             showBollinger={showBollinger}
+            globalWeekly={globalWeekly}
             useStoredSelection={false}
           />;
         })}
