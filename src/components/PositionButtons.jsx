@@ -9,23 +9,25 @@ export default function PositionButtons({ symbol, name }) {
   const state = useSharedPositions();
   const key = String(symbol || '').trim().toUpperCase();
   const position = state.positions[key];
+  const saving = Boolean(state.saving[key]);
   const toggle = status => {
+    if (saving) return;
     if (!state.connected) { openPositionLogin(); return; }
     void saveSharedPosition(key, { name, status: position?.status === status ? '' : status });
   };
   return <div className="position-controls-wrapper">
-    <div className="position-mini-controls" aria-label={`${name || symbol} 종목 기록`} aria-busy={Boolean(state.saving[key])}>
+    <div className="position-mini-controls" aria-label={`${name || symbol} 종목 기록`} aria-busy={saving}>
       {BUTTONS.map(([status, label]) => <button key={status} type="button"
         className={`position-mini-btn ${status}${position?.status === status ? ' active' : ''}`}
-        aria-pressed={position?.status === status} disabled={state.saving[key]}
+        aria-pressed={position?.status === status} aria-disabled={saving}
         onClick={() => toggle(status)}>{label}</button>)}
       <button type="button" className={`position-mini-btn caution${position?.caution ? ' active' : ''}`}
-        aria-pressed={position?.caution === true} disabled={state.saving[key]}
+        aria-pressed={position?.caution === true} aria-disabled={saving}
         onClick={() => {
+          if (saving) return;
           if (!state.connected) { openPositionLogin(); return; }
           void saveSharedPosition(key, { name, caution: !position?.caution });
         }}>주의!</button>
-      {state.saving[key] && <span className="position-save-status" role="status">저장 중...</span>}
     </div>
     {state.errors[key] && <small className="position-save-error" role="alert" title={state.errors[key]}>{state.errors[key]}</small>}
   </div>;

@@ -223,11 +223,22 @@ html, body {
 .symbol-row--with-positions {
   flex-wrap: nowrap;
   white-space: nowrap;
+  min-width: 0;
+}
+.symbol-details { display: contents; }
+/* Only quote details scroll. Focusing a record button must not scroll the
+   whole header or move the other four buttons. */
+.symbol-row--with-positions .symbol-details {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
 }
-.symbol-row--with-positions::-webkit-scrollbar { display: none; }
-.symbol-row--with-positions > * { flex-shrink: 0; }
+.symbol-row--with-positions .symbol-details::-webkit-scrollbar { display: none; }
+.symbol-row--with-positions .symbol-details > * { flex-shrink: 0; }
 .symbol-name { font-size: 14px; font-weight: 600; color: var(--text); }
 .symbol-code { font-size: 11px; color: var(--muted); }
 .quote-chip {
@@ -389,15 +400,13 @@ html, body {
 .position-controls-wrapper { position: relative; flex-shrink: 0; margin-left: auto; }
 .position-mini-controls { display: flex; gap: 3px; align-items: center; flex-wrap: nowrap; margin: 0; }
 .position-mini-btn { flex-shrink: 0; white-space: nowrap; border: 1px solid #cbd5e1; border-radius: 5px; padding: 3px 5px; min-height: 24px; background: #fff; color: #475569; font-family: inherit; font-size: 11px; font-weight: 700; line-height: 1.35; cursor: pointer; }
-.position-mini-btn:disabled { opacity: .6; cursor: wait; }
 .position-mini-btn.long-hold.active { background: #dc2626; border-color: #dc2626; color: #fff; }
 .position-mini-btn.long-watch.active { background: rgba(220,38,38,.13); border-color: rgba(220,38,38,.55); color: #b91c1c; }
 .position-mini-btn.short-watch.active { background: rgba(37,99,235,.13); border-color: rgba(37,99,235,.55); color: #1d4ed8; }
 .position-mini-btn.short-hold.active { background: #2563eb; border-color: #2563eb; color: #fff; }
 .position-mini-btn.caution.active { background: #facc15; border-color: #ca8a04; color: #422006; box-shadow: inset 0 0 0 1px #ca8a04; }
-/* Save feedback overlays the existing controls instead of changing their width.
-   This also keeps slow/failed server requests from moving neighboring charts. */
-.position-save-status, .position-save-error {
+/* Keep errors visible without resizing the controls or neighboring charts. */
+.position-save-error {
   position: absolute;
   inset: 0;
   z-index: 1;
@@ -412,7 +421,6 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.position-save-status { color: var(--muted); font-size: 10px; }
 .position-save-error { color: #b91c1c; border-color: #fecaca; font-size: 11px; }
 .shared-record-button { flex-shrink: 0; border: 1px solid var(--border); border-radius: 5px; background: #fff; color: var(--text); padding: 4px 6px; font-size: 10px; cursor: pointer; }
 .position-login-backdrop { position: fixed; inset: 0; z-index: 10000; display: grid; place-items: center; background: rgba(15,23,42,.35); padding: 16px; }

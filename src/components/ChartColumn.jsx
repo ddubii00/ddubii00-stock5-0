@@ -1981,20 +1981,22 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
 
         {symbol && (
           <div className={`symbol-row${showPositionControls ? ' symbol-row--with-positions' : ''}`}>
-            <span className="symbol-name">{symbolName || symbol}</span>
-            <span className="symbol-code">{symbol}</span>
-            {quote?.symbol === symbol && (
-              <span className={`quote-chip ${quoteTone(quote)}`}>
-                <span className="quote-price">{formatHeaderPrice(quote.price, symbol)}</span>
-                {Number.isFinite(quote.changePct) && Number.isFinite(quote.change) && (
-                  <span className="quote-change">
-                    ({formatSignedPercent(quote.changePct)}, {formatSignedValue(quote.change, '', quoteValueDigits(symbol))})
-                  </span>
-                )}
-                <span className="quote-state">{marketStateLabel(symbol)}</span>
-              </span>
-            )}
-            {loading && <span className="loading-dot">●</span>}
+            <div className="symbol-details">
+              <span className="symbol-name">{symbolName || symbol}</span>
+              <span className="symbol-code">{symbol}</span>
+              {quote?.symbol === symbol && (
+                <span className={`quote-chip ${quoteTone(quote)}`}>
+                  <span className="quote-price">{formatHeaderPrice(quote.price, symbol)}</span>
+                  {Number.isFinite(quote.changePct) && Number.isFinite(quote.change) && (
+                    <span className="quote-change">
+                      ({formatSignedPercent(quote.changePct)}, {formatSignedValue(quote.change, '', quoteValueDigits(symbol))})
+                    </span>
+                  )}
+                  <span className="quote-state">{marketStateLabel(symbol)}</span>
+                </span>
+              )}
+              {loading && <span className="loading-dot">●</span>}
+            </div>
             {showPositionControls && <PositionButtons symbol={symbol} name={symbolName || symbol} />}
           </div>
         )}
