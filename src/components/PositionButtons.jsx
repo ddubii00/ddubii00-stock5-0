@@ -14,7 +14,7 @@ export default function PositionButtons({ symbol, name }) {
     void saveSharedPosition(key, { name, status: position?.status === status ? '' : status });
   };
   return <div className="position-controls-wrapper">
-    <div className="position-mini-controls" aria-label={`${name || symbol} 종목 기록`}>
+    <div className="position-mini-controls" aria-label={`${name || symbol} 종목 기록`} aria-busy={Boolean(state.saving[key])}>
       {BUTTONS.map(([status, label]) => <button key={status} type="button"
         className={`position-mini-btn ${status}${position?.status === status ? ' active' : ''}`}
         aria-pressed={position?.status === status} disabled={state.saving[key]}
@@ -27,6 +27,6 @@ export default function PositionButtons({ symbol, name }) {
         }}>주의!</button>
       {state.saving[key] && <span className="position-save-status" role="status">저장 중...</span>}
     </div>
-    {state.errors[key] && <small className="position-save-error" role="alert">{state.errors[key]}</small>}
+    {state.errors[key] && <small className="position-save-error" role="alert" title={state.errors[key]}>{state.errors[key]}</small>}
   </div>;
 }

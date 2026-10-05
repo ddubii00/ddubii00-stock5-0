@@ -11,6 +11,9 @@
 
   const historyBars = new URL(location.href).searchParams.get('history') === 'short' ? 120 : 2400;
   const rankingRetry = new URL(location.href).searchParams.get('ranking') === 'retry';
+  const longNames = new URL(location.href).searchParams.get('names') === 'long';
+  const saveDelay = Math.min(10000, Math.max(0, Number(new URL(location.href).searchParams.get('saveDelay')) || 0));
+  const saveFailure = new URL(location.href).searchParams.get('save') === 'fail';
   const rankingStats = { requests: 0, aborted: 0, completed: 0, failed: 0 };
   const reportRanking = () => {
     document.querySelector('#ranking-api-status').textContent = JSON.stringify(rankingStats);
@@ -36,7 +39,15 @@
   window.fetch = async (input, options = {}) => {
     const { signal } = options;
     const url = new URL(String(input), location.href);
-    if (url.pathname.endsWith('/state')) return serverFetch(input, options);
+    if (url.pathname.endsWith('/state')) {
+      if (options.method === 'PATCH') {
+        await delay(saveDelay, signal);
+        if (saveFailure) return new Response(JSON.stringify({ error: '검증용 저장 오류' }), {
+          status: 503, headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return serverFetch(input, options);
+    }
     let payload;
     if (url.pathname.endsWith('/quote')) {
       payload = { price: 160, change: 1, changePct: .63 };
@@ -61,7 +72,7 @@
       reportRanking();
       const count = url.searchParams.get('market') === 'nikkei' ? 50 : 100;
       payload = { items: Array.from({ length: count }, (_, i) => ({
-        symbol: `TEST${i + 1}`, name: `검증 종목 ${i + 1}`, rank: i + 1,
+        symbol: `TEST${i + 1}`, name: longNames ? `검증용 긴 종목명 한미반도체 ${i + 1}` : `검증 종목 ${i + 1}`, rank: i + 1,
       })) };
     } else if (url.pathname.endsWith('/ohlcv')) {
       const weekly = url.searchParams.get('interval') === 'week';
