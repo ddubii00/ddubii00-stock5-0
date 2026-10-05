@@ -8,6 +8,8 @@
   import { createRoot } from 'react-dom/client';
   import App from '../src/App.jsx';
 
+  const historyBars = new URL(location.href).searchParams.get('history') === 'short' ? 120 : 2400;
+
   // Use synthetic data to check controls without credentials or market requests.
   window.fetch = async input => {
     const url = new URL(String(input), location.href);
@@ -22,14 +24,19 @@
     } else if (url.pathname.endsWith('/ohlcv')) {
       const weekly = url.searchParams.get('interval') === 'week';
       await new Promise(resolve => setTimeout(resolve, weekly ? 30 : 180));
-      payload = Array.from({ length: 350 }, (_, i) => {
+      const date = new Date(Date.UTC(weekly ? 1980 : 2015, 0, 1));
+      payload = Array.from({ length: historyBars }, (_, i) => {
+        if (i) date.setUTCDate(date.getUTCDate() + (weekly ? 7 : 1));
+        if (!weekly) {
+          while ([0, 6].includes(date.getUTCDay())) date.setUTCDate(date.getUTCDate() + 1);
+        }
         const close = 100 + i * .2 + Math.sin(i / 8) * 8;
         return {
-          time: new Date(Date.UTC(weekly ? 2018 : 2024, 0, 1 + i * (weekly ? 7 : 1))).toISOString().slice(0, 10),
+          time: date.toISOString().slice(0, 10),
           open: close - 1, high: close + 3, low: close - 3, close,
           volume: 10000 + i * 50,
         };
-      });
+      }).slice(-Number(url.searchParams.get('limit') || 350));
     } else {
       payload = [];
     }

@@ -11,6 +11,7 @@ import StockSearch from './StockSearch';
 import TrendLineOverlay from './TrendLineOverlay';
 import { useChartTimeframe } from '../utils/chartTimeframe';
 import { cleanTrendLines } from '../utils/trendLines';
+import { mainHistoryRequestLimit, mainHistoryWindow } from '../utils/chartHistory';
 import { apiUrl } from '../api';
 
 const MAIN_TFS = [
@@ -53,12 +54,7 @@ function isIntradayTf(tf) {
 }
 
 function requestLimit(tf, baseLimit) {
-  if (isIntradayTf(tf)) {
-    const buffer = 1200;
-    return Math.min(Math.max(baseLimit + buffer, baseLimit * 4, 240), 2000);
-  }
-  const buffer = 720;
-  return Math.min(Math.max(baseLimit + buffer, baseLimit * 4), 2000);
+  return mainHistoryRequestLimit(tf.interval, baseLimit);
 }
 
 function ichimokuRequestLimit(tf, baseLimit) {
@@ -899,6 +895,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
   const [ichiLimitInput, setIchiLimitInput] = useState('120');
   const [loading,    setLoading]    = useState(false);
   const [error,      setError]      = useState('');
+  const [maHistoryWarning, setMaHistoryWarning] = useState(null);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState('');
@@ -1628,8 +1625,10 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
     }
 
     // 메인과 일목 차트가 같은 장중/휴장 필터를 거치도록 통일한다.
-    const candles = normalizeChartCandles(data, sym, tf);
-    if (!candles.length) throw new Error('시세 데이터가 비어 있습니다.');
+    const history = normalizeChartCandles(data, sym, tf);
+    if (!history.length) throw new Error('시세 데이터가 비어 있습니다.');
+    const { start, candles, missingVisibleMA200 } = mainHistoryWindow(history, lim);
+    setMaHistoryWarning(missingVisibleMA200 ? { key: viewKey, count: missingVisibleMA200 } : null);
     crosshairValueMapsRef.current = { candle: new Map(), volume: new Map(), macd: new Map() };
     mainCandlesRef.current = candles;
     mainDataKeyRef.current = `${sym}:${tf.interval}`;
@@ -1638,11 +1637,11 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
 
     // MA 계산 및 팝업용 맵 저장
     maMaps.current = MA_PERIODS.map((period, idx) => {
-      const maData = calculateMA(candles, period);
+      const maData = calculateMA(history, period).slice(start);
       ser.current.maLines[idx]?.setData(safeLineData(maData));
       return buildTimeMap(maData);
     });
-    const bollinger = calculateBollingerBands(candles);
+    const bollinger = calculateBollingerBands(history).slice(start);
     ser.current.bollingerUpper?.setData(safeLineData(bollinger.map(({ time, upper }) => ({ time, value: upper }))));
     ser.current.bollingerMiddle?.setData(safeLineData(bollinger.map(({ time, middle }) => ({ time, value: middle }))));
     ser.current.bollingerLower?.setData(safeLineData(bollinger.map(({ time, lower }) => ({ time, value: lower }))));
@@ -1651,7 +1650,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
     const volData = candles
       .map((d, i) => {
         const currentVolume = +d.volume;
-        const previousVolume = candles[i - 1]?.volume;
+        const previousVolume = history[start + i - 1]?.volume;
         if (!Number.isFinite(currentVolume)) return { time: d.time };
         return {
           time: d.time,
@@ -1664,7 +1663,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
     crosshairValueMapsRef.current.volume = new Map(volData.filter(d => Number.isFinite(d.value)).map(d => [timeKey(d.time), d.value]));
 
     // MACD
-    const macd = calculateMACD(candles);
+    const macd = calculateMACD(history).slice(start);
     macdDataRef.current = macd;
     const macdHistData = macd.map(d => (
       Number.isFinite(d.histogram)
@@ -2063,6 +2062,12 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
             <span className="legend-swatch" style={{ backgroundColor: MA_COLORS[i] }} />{p}
           </button>
         ))}
+        {mainVisible.ma200 && maHistoryWarning?.key === `${symbol}:${mainTf.interval}:${limit}` && (
+          <span className="ma-history-warning" role="status"
+            title="200 이평선은 해당 봉과 앞선 199개 봉의 실제 종가가 필요합니다. 데이터 제공 범위 또는 상장 이력이 부족한 구간은 임의로 채우지 않습니다.">
+            200 이평: 과거 데이터 부족 ({maHistoryWarning.count}봉)
+          </span>
+        )}
         <span
           className={`legend-btn bollinger-legend${showBollinger ? '' : ' muted'}`}
           title="볼린저밴드: 20기간 이동평균 ± 2 표준편차. 헤더 BB 버튼으로 전체 차트 표시/숨김"

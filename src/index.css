@@ -405,6 +405,10 @@ html, body {
   opacity: .55;
   text-decoration: line-through;
 }
+.ma-history-warning {
+  color: #92400e;
+  font-size: 10px;
+}
 .legend-swatch {
   width: 9px;
   height: 3px;

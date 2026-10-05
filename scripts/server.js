@@ -9,6 +9,7 @@ import WebSocket from 'ws';
 import YahooFinance from 'yahoo-finance2';
 import { analyzeCharts } from '../api/_analyze.js';
 import { RANKING_UNIVERSES } from '../src/marketPresets.js';
+import { MAX_OHLCV_HISTORY } from '../src/utils/chartHistory.js';
 
 dotenv.config({ path: '.env.local', quiet: true });
 dotenv.config({ quiet: true });
@@ -909,12 +910,12 @@ async function fetchKisOverseasDailyOhlcv(symbol, interval, limit) {
   const exchange = upper.endsWith('.T') ? 'TSE' : 'NAS';
   const code = upper.replace(/\.T$/, '');
   const gubn = interval === 'week' ? '1' : interval === 'month' ? '2' : '0';
-  const target = Math.min(Math.max(Number(limit) || 120, 120), 800);
+  const target = Math.min(Math.max(Number(limit) || 120, 120), MAX_OHLCV_HISTORY);
   const rowsByDate = new Map();
   let bymd = '';
   let previousOldest = '';
 
-  for (let page = 0; page < 10 && rowsByDate.size < target; page += 1) {
+  for (let page = 0; page < 30 && rowsByDate.size < target; page += 1) {
     const params = new URLSearchParams({ AUTH: '', EXCD: exchange, SYMB: code, GUBN: gubn, BYMD: bymd, MODP: '1' });
     const response = await fetch(`${kisBaseUrl()}/uapi/overseas-price/v1/quotations/dailyprice?${params}`, {
       headers: kisHeaders(token, 'HHDFS76240000'),
@@ -1278,7 +1279,7 @@ app.get('/api/ohlcv', async (req, res) => {
   try {
     const { symbol, interval = 'day', limit = 300 } = req.query;
     if (!symbol) return res.status(400).json({ error: 'symbol required' });
-    const lim = Math.min(Number(limit) || 300, 2000);
+    const lim = Math.min(Number(limit) || 300, MAX_OHLCV_HISTORY);
     let data;
     const isKorean = /^\d{6}$/.test(symbol) || symbol.endsWith('.KS') || symbol.endsWith('.KQ');
     const isIndex = symbol.startsWith('^');
