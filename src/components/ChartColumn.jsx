@@ -5,6 +5,7 @@ import {
   HistogramSeries,
   LineSeries,
   CrosshairMode,
+  LineStyle,
 } from 'lightweight-charts';
 import { calculateMACD, calculateIchimoku, calculateMA, calculateBollingerBands, buildTimeMap } from '../utils/indicators';
 import StockSearch from './StockSearch';
@@ -848,6 +849,12 @@ const BASE_OPTS = {
   },
 };
 
+const PRICE_CROSSHAIR = {
+  mode: CrosshairMode.Normal,
+  vertLine: { visible: true, labelVisible: true, style: LineStyle.Dotted, color: '#64748b' },
+  horzLine: { visible: true, labelVisible: true, style: LineStyle.Dotted, color: '#64748b' },
+};
+
 function loadTrendLines(symbol) {
   try {
     return cleanTrendLines(JSON.parse(localStorage.getItem(`stock5-0-trend-lines:${symbol}`) || '{}'));
@@ -1101,7 +1108,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
     };
     const pc = createChart(priceRef.current, {
       ...chartOptions,
-      crosshair: { mode: CrosshairMode.Normal },
+      crosshair: PRICE_CROSSHAIR,
       height: 300, width: w(priceRef),
     });
     const vc = createChart(volumeRef.current, {
@@ -1124,7 +1131,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
     });
     const ic = createChart(ichiRef.current, {
       ...chartOptions,
-      crosshair: { mode: CrosshairMode.Normal },
+      crosshair: PRICE_CROSSHAIR,
       height: 240, width: w(ichiRef),
     });
 
@@ -1272,14 +1279,9 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
                     : '') +
                   (maRows ? `<div class="tt-ma-row">${maRows}</div>` : '');
 
-                const cw = priceRef.current?.clientWidth || 400;
-                const tooltipWidth = 168;
-                let lx = param.point.x - tooltipWidth - 14;
-                if (lx < 4) lx = param.point.x + 12;
-                if (lx + tooltipWidth > cw) lx = Math.max(4, cw - tooltipWidth);
-                tip.style.left = lx + 'px';
-                tip.style.top  = Math.max(4, param.point.y - 58) + 'px';
                 tip.style.display = 'block';
+              } else {
+                tip.style.display = 'none';
               }
             }
           }
@@ -1342,12 +1344,6 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
       }
 
       tip.innerHTML = rows.join('');
-      const cw = ichiRef.current?.clientWidth || 400;
-      let lx = param.point.x - 154;
-      if (lx < 4) lx = param.point.x + 10;
-      if (lx + 148 > cw) lx = Math.max(4, cw - 148);
-      tip.style.left = `${lx}px`;
-      tip.style.top = `${Math.max(4, param.point.y - 36)}px`;
       tip.style.display = 'grid';
     });
 

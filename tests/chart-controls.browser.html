@@ -3,27 +3,66 @@
 <meta charset="utf-8" />
 <title>stock5-0 차트 기능 검증 — 모의 API</title>
 <div id="root"></div>
+<output id="ranking-api-status" hidden></output>
 <script type="module">
   import React from 'react';
   import { createRoot } from 'react-dom/client';
   import App from '../src/App.jsx';
 
   const historyBars = new URL(location.href).searchParams.get('history') === 'short' ? 120 : 2400;
+  const rankingRetry = new URL(location.href).searchParams.get('ranking') === 'retry';
+  const rankingStats = { requests: 0, aborted: 0, completed: 0, failed: 0 };
+  const reportRanking = () => {
+    document.querySelector('#ranking-api-status').textContent = JSON.stringify(rankingStats);
+  };
+  const delay = (milliseconds, signal) => new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const cancel = () => {
+      clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', cancel);
+      resolve();
+    }, milliseconds);
+    signal?.addEventListener('abort', cancel, { once: true });
+  });
 
   // Use synthetic data to check controls without credentials or market requests.
-  window.fetch = async input => {
+  window.fetch = async (input, { signal } = {}) => {
     const url = new URL(String(input), location.href);
     let payload;
     if (url.pathname.endsWith('/quote')) {
       payload = { price: 160, change: 1, changePct: .63 };
     } else if (url.pathname.endsWith('/top100')) {
+      rankingStats.requests += 1;
+      reportRanking();
+      try {
+        await delay(600, signal);
+      } catch (error) {
+        rankingStats.aborted += 1;
+        reportRanking();
+        throw error;
+      }
+      if (rankingRetry && rankingStats.requests === 1) {
+        rankingStats.failed += 1;
+        reportRanking();
+        return new Response(JSON.stringify({ error: '검증용 순위 API 오류' }), {
+          status: 502, headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      rankingStats.completed += 1;
+      reportRanking();
       const count = url.searchParams.get('market') === 'nikkei' ? 50 : 100;
       payload = { items: Array.from({ length: count }, (_, i) => ({
         symbol: `TEST${i + 1}`, name: `검증 종목 ${i + 1}`, rank: i + 1,
       })) };
     } else if (url.pathname.endsWith('/ohlcv')) {
       const weekly = url.searchParams.get('interval') === 'week';
-      await new Promise(resolve => setTimeout(resolve, weekly ? 30 : 180));
+      await delay(weekly ? 30 : 180, signal);
       const date = new Date(Date.UTC(weekly ? 1980 : 2015, 0, 1));
       payload = Array.from({ length: historyBars }, (_, i) => {
         if (i) date.setUTCDate(date.getUTCDate() + (weekly ? 7 : 1));

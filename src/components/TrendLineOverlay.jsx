@@ -15,6 +15,41 @@ function TrendLineShape({ line, drawing, selected }) {
   );
 }
 
+// Paint above saved lines and their handles. Pointer events still go to the
+// native chart; pointermove also works while drawing suppresses mouse events.
+function CrosshairAboveTrendLines({ containerRef, chartsRef, ready, width, height }) {
+  const [point, setPoint] = useState(null);
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!ready || !container) return undefined;
+    const move = event => {
+      const bounds = container.getBoundingClientRect();
+      const x = event.clientX - bounds.left;
+      const y = event.clientY - bounds.top;
+      if (x < 0 || x >= width || y < 0 || y >= height) {
+        setPoint(null);
+        return;
+      }
+      const scale = chartsRef.current.price?.timeScale();
+      const logical = scale?.coordinateToLogical(x);
+      const snappedX = logical == null ? x : scale.logicalToCoordinate(Math.round(logical));
+      setPoint({ x: snappedX ?? x, y });
+    };
+    const leave = () => setPoint(null);
+    container.addEventListener('pointermove', move);
+    container.addEventListener('pointerleave', leave);
+    return () => {
+      container.removeEventListener('pointermove', move);
+      container.removeEventListener('pointerleave', leave);
+    };
+  }, [containerRef, chartsRef, ready, width, height]);
+  if (!ready || !point) return null;
+  return <g className="trend-crosshair" aria-hidden="true" stroke="#64748b" strokeWidth="1" strokeDasharray="1 3" pointerEvents="none">
+    <line x1={point.x} y1="0" x2={point.x} y2={height} />
+    <line x1="0" y1={point.y} x2={width} y2={point.y} />
+  </g>;
+}
+
 export default function TrendLineOverlay({ chartsRef, seriesRef, candlesRef, containerRef, ready, lines = [], onChange }) {
   const [drawing, setDrawing] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
@@ -216,6 +251,8 @@ export default function TrendLineOverlay({ chartsRef, seriesRef, candlesRef, con
           {geometry.points.filter((line) => [line.a.x, line.a.y, line.b.x, line.b.y].every(Number.isFinite)).map((line) => (
             <TrendLineShape key={line.id} line={line} drawing={drawing} selected={line.id === selectedId} />
           ))}
+          <CrosshairAboveTrendLines containerRef={containerRef} chartsRef={chartsRef}
+            ready={ready} width={geometry.width} height={geometry.height} />
         </g>
       </svg>
     </div>

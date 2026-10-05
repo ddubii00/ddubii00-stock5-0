@@ -112,6 +112,7 @@ function App() {
   const [rankedGroups, setRankedGroups] = useState({});
   const [rankedLoading, setRankedLoading] = useState({});
   const [rankedErrors, setRankedErrors] = useState({});
+  const [rankedRetryVersion, setRankedRetryVersion] = useState(0);
   const rankedRequestRef = useRef({});
 
   useEffect(() => {
@@ -177,12 +178,14 @@ function App() {
     setPresetVersion(version => version + 1);
   };
 
+  const currentRankedGroup = rankedGroups[view];
   useEffect(() => {
-    if (!rankedView || rankedGroups[view] || rankedLoading[view]) return undefined;
+    if (!rankedView || currentRankedGroup) return undefined;
     const controller = new AbortController();
     void loadRankedGroup(view, controller.signal);
     return () => controller.abort();
-  }, [loadRankedGroup, rankedGroups, rankedLoading, rankedView, view]);
+    // Loading changes must not abort the request that set them.
+  }, [loadRankedGroup, currentRankedGroup, rankedRetryVersion, rankedView, view]);
 
   const fetchQuote = useCallback(async (symbol, signal) => {
     const response = await fetch(
@@ -423,10 +426,13 @@ function App() {
 
       <div className="dashboard-grid">
         {rankedView && rankedLoading[view] && selectedItems.length === 0 && (
-          <div className="top100-status">전일 시가총액 순위 불러오는 중...</div>
+          <div className="top100-status" role="status">전일 시가총액 순위 불러오는 중...</div>
         )}
         {rankedView && !rankedLoading[view] && rankedErrors[view] && selectedItems.length === 0 && (
-          <div className="top100-status error">{rankedErrors[view]}</div>
+          <div className="top100-status error" role="alert">
+            {rankedErrors[view]}
+            <button type="button" onClick={() => setRankedRetryVersion(version => version + 1)}>다시 시도</button>
+          </div>
         )}
         {selectedItems.map((item, index) => {
           const Component = isLazyGroup ? LazyChartColumn : ChartColumn;
