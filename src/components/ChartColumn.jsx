@@ -12,6 +12,7 @@ import StockSearch from './StockSearch';
 import TrendLineOverlay from './TrendLineOverlay';
 import PositionButtons from './PositionButtons';
 import { useChartTimeframe } from '../utils/chartTimeframe';
+import { useChartVisibility } from '../utils/chartVisibility';
 import { cleanTrendLines } from '../utils/trendLines';
 import { mainHistoryRequestLimit, mainHistoryWindow } from '../utils/chartHistory';
 import { apiUrl } from '../api';
@@ -896,6 +897,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
   const [symbolName, setSymbolName] = useState(stored?.name   || defaultName   || '');
   const [mainTf, setMainTf] = useChartTimeframe(MAIN_TFS[6], MAIN_TFS[7], globalWeekly);
   const [ichiTf, setIchiTf] = useChartTimeframe(DEFAULT_ICHI_TF, ICHI_TFS[7], globalWeekly);
+  const [bollingerVisible, toggleBollingerVisible] = useChartVisibility(showBollinger);
   const [trendLines, saveTrendLines] = useSavedTrendLines(symbol);
   const [limit,      setLimit]      = useState(120);
   const [limitInput, setLimitInput] = useState('120');
@@ -992,10 +994,10 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
   }, [mainVisible]);
 
   useEffect(() => {
-    ser.current.bollingerUpper?.applyOptions({ visible: showBollinger });
-    ser.current.bollingerMiddle?.applyOptions({ visible: showBollinger });
-    ser.current.bollingerLower?.applyOptions({ visible: showBollinger });
-  }, [showBollinger, chartsReady]);
+    ser.current.bollingerUpper?.applyOptions({ visible: bollingerVisible });
+    ser.current.bollingerMiddle?.applyOptions({ visible: bollingerVisible });
+    ser.current.bollingerLower?.applyOptions({ visible: bollingerVisible });
+  }, [bollingerVisible, chartsReady]);
 
   useEffect(() => {
     ser.current.ichiCandle?.applyOptions({ visible: ichiVisible.candle });
@@ -1977,9 +1979,9 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
       <div className="column-header">
         <StockSearch onSelect={handleSelect} placeholder="종목/지수 검색 (예: 하이닉스, KOSPI, AAPL, S&P500)..." />
 
-        {symbolName && (
-          <div className="symbol-row">
-            <span className="symbol-name">{symbolName}</span>
+        {symbol && (
+          <div className={`symbol-row${showPositionControls ? ' symbol-row--with-positions' : ''}`}>
+            <span className="symbol-name">{symbolName || symbol}</span>
             <span className="symbol-code">{symbol}</span>
             {quote?.symbol === symbol && (
               <span className={`quote-chip ${quoteTone(quote)}`}>
@@ -1993,10 +1995,10 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
               </span>
             )}
             {loading && <span className="loading-dot">●</span>}
+            {showPositionControls && <PositionButtons symbol={symbol} name={symbolName || symbol} />}
           </div>
         )}
         {error && <div className="error-bar">{error}</div>}
-        {showPositionControls && symbol && <PositionButtons symbol={symbol} name={symbolName || symbol} />}
 
         <div className="controls-row">
           <div className="tf-group">
@@ -2066,12 +2068,15 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
             200 이평: 과거 데이터 부족 ({maHistoryWarning.count}봉)
           </span>
         )}
-        <span
-          className={`legend-btn bollinger-legend${showBollinger ? '' : ' muted'}`}
-          title="볼린저밴드: 20기간 이동평균 ± 2 표준편차. 헤더 BB 버튼으로 전체 차트 표시/숨김"
+        <button
+          type="button"
+          className={`legend-btn bollinger-legend${bollingerVisible ? '' : ' muted'}`}
+          aria-pressed={bollingerVisible}
+          onClick={toggleBollingerVisible}
+          title="볼린저밴드: 20기간 이동평균 ± 2 표준편차. 클릭하면 이 차트만 표시/숨김 (전체 BB와 개별 조절 가능)"
         >
           <span className="legend-swatch bollinger" aria-hidden="true" />볼린저밴드
-        </span>
+        </button>
       </div>
 
       {/* 차트 영역 */}
