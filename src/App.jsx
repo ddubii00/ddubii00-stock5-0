@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ChartColumn from './components/ChartColumn';
+import SharedPositionAccess from './components/SharedPositionAccess';
+import { startSharedPositions } from './state/sharedPositions';
 import { apiUrl } from './api';
 import { GROUPS, INDEX_ITEMS } from './marketPresets';
 import './index.css';
@@ -117,6 +119,7 @@ function App() {
 
   useEffect(() => {
     document.title = 'stock5-0 지수정보';
+    return startSharedPositions();
   }, []);
 
   const loadRankedGroup = useCallback(async (groupKey, signal) => {
@@ -389,6 +392,7 @@ function App() {
           )}
         </div>
 
+        <SharedPositionAccess />
         <div className="index-view-control">
           <select
             id="index-view"
@@ -443,6 +447,7 @@ function App() {
             defaultName={item.name}
             showBollinger={showBollinger}
             globalWeekly={globalWeekly}
+            showPositionControls={view !== 'index'}
             useStoredSelection={false}
           />;
         })}

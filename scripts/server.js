@@ -10,6 +10,7 @@ import YahooFinance from 'yahoo-finance2';
 import { analyzeCharts } from '../api/_analyze.js';
 import { RANKING_UNIVERSES } from '../src/marketPresets.js';
 import { MAX_OHLCV_HISTORY } from '../src/utils/chartHistory.js';
+import stateHandler from '../api/state.js';
 
 dotenv.config({ path: '.env.local', quiet: true });
 dotenv.config({ quiet: true });
@@ -48,6 +49,7 @@ const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
+app.all('/api/state', stateHandler);
 
 let krxCache = { loadedAt: 0, items: [] };
 const ohlcvCache = new Map();

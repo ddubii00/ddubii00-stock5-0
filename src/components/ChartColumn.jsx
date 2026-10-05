@@ -10,6 +10,7 @@ import {
 import { calculateMACD, calculateIchimoku, calculateMA, calculateBollingerBands, buildTimeMap } from '../utils/indicators';
 import StockSearch from './StockSearch';
 import TrendLineOverlay from './TrendLineOverlay';
+import PositionButtons from './PositionButtons';
 import { useChartTimeframe } from '../utils/chartTimeframe';
 import { cleanTrendLines } from '../utils/trendLines';
 import { mainHistoryRequestLimit, mainHistoryWindow } from '../utils/chartHistory';
@@ -879,7 +880,7 @@ function useSavedTrendLines(symbol) {
   return [current.lines, save];
 }
 
-export default function ChartColumn({ id, defaultSymbol, defaultName, showBollinger = false, globalWeekly = false, useStoredSelection = true }) {
+export default function ChartColumn({ id, defaultSymbol, defaultName, showBollinger = false, globalWeekly = false, useStoredSelection = true, showPositionControls = false }) {
   // 프리셋 차트는 이전 검색 종목(localStorage) 대신 지정된 지수를 우선 사용한다.
   const storageKey = `stock5_symbol_${id}`;
   const storedRaw = useStoredSelection ? localStorage.getItem(storageKey) : null;
@@ -1995,6 +1996,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
           </div>
         )}
         {error && <div className="error-bar">{error}</div>}
+        {showPositionControls && symbol && <PositionButtons symbol={symbol} name={symbolName || symbol} />}
 
         <div className="controls-row">
           <div className="tf-group">
