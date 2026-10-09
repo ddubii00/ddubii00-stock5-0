@@ -611,13 +611,13 @@ html, body {
   pointer-events: none;
   background: rgba(255, 255, 255, 0.96);
   border: 1px solid #e2e5ec;
-  border-radius: 5px;
-  padding: 3px 5px;
-  box-shadow: 0 3px 8px rgba(0,0,0,0.1);
+  border-radius: 4px;
+  padding: 2px 4px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
   width: max-content;
   max-width: calc(100% - 8px);
-  font-size: 10px;
-  line-height: 1.12;
+  font-size: 9px;
+  line-height: 1.15;
   backdrop-filter: blur(2px);
 }
 
@@ -644,7 +644,7 @@ html, body {
 .tt-ma-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 1px 6px;
+  gap: 1px 4px;
   margin-top: 1px;
 }
 .tt-ma {
@@ -658,7 +658,7 @@ html, body {
 .ichi-tooltip {
   z-index: 120;
   grid-template-columns: 1fr 1fr;
-  gap: 1px 6px;
+  gap: 1px 4px;
 }
 
 .ichi-tt-item {
