@@ -3,6 +3,26 @@ import { test } from 'node:test';
 import { parseKoreanFundamentals, parseYahooFundamentals, createFundamentalsHandler } from '../api/fundamentals.js';
 import { fundamentalMetrics } from '../src/utils/fundamentalMetrics.js';
 
+test('market cap and operating income use magnitude-based precision without changing revenue', () => {
+  const cases = [
+    [123.789, '124'], [100.001, '100'], [100, '100'],
+    [12.345, '12.3'], [1.001, '1'], [1, '1'],
+    [0.98765, '0.99'], [0.12345, '0.12'], [0, '0'],
+    [-123.789, '-124'], [-12.345, '-12.3'], [-0.12345, '-0.12'],
+  ];
+  for (const [amount, expected] of cases) {
+    const metrics = fundamentalMetrics({ marketCap: amount * 1e12, operatingIncome: amount * 1e12, currency: 'KRW' });
+    for (const key of ['marketCap', 'operatingIncome']) {
+      assert.equal(metrics.find(metric => metric.key === key).value, `${expected}조원`, `${key}: ${amount}`);
+    }
+  }
+  const metrics = fundamentalMetrics({ marketCap: 12.345e12, operatingIncome: 0.12345e12,
+    revenue: 12.345678e12, marketCapCurrency: 'USD', currency: 'JPY' });
+  assert.equal(metrics.find(metric => metric.key === 'marketCap').value, '12.3조USD');
+  assert.equal(metrics.find(metric => metric.key === 'operatingIncome').value, '0.12조JPY');
+  assert.equal(metrics.find(metric => metric.key === 'revenue').value, '12.345678조JPY');
+});
+
 test('Korean annual actuals and forward consensus remain separate; EPS-based PEG is marked estimated', () => {
   const values = { 매출액: [10000, 15000], 영업이익: [-200, 300], ROE: [-5, 12], EPS: [100, 150], PER: [12, 8], PBR: [1.2, 1.1] };
   const data = parseKoreanFundamentals('005930.KS', { totalInfos: [{ code: 'marketValue', value: '123조 4,567억' }, { code: 'per', value: '10배' }] }, {
