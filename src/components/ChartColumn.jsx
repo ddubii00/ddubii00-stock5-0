@@ -882,7 +882,7 @@ function useSavedTrendLines(symbol) {
   return [current.lines, save];
 }
 
-export default function ChartColumn({ id, defaultSymbol, defaultName, marketCapRank = null, showBollinger = false, globalWeekly = false, useStoredSelection = true, showPositionControls = false }) {
+export default function ChartColumn({ id, defaultSymbol, defaultName, marketCapRank = null, marketCapRankTitle = '시가총액 순위', showBollinger = false, globalWeekly = false, useStoredSelection = true, showPositionControls = false }) {
   // 프리셋 차트는 이전 검색 종목(localStorage) 대신 지정된 지수를 우선 사용한다.
   const storageKey = `stock5_symbol_${id}`;
   const storedRaw = useStoredSelection ? localStorage.getItem(storageKey) : null;
@@ -1985,7 +1985,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, marketCapR
             <div className="symbol-details">
               <span className="symbol-name">
                 {symbol === defaultSymbol && Number.isInteger(marketCapRank) && marketCapRank > 0
-                  && <span className="symbol-rank">{marketCapRank}. </span>}
+                  && <span className="symbol-rank" title={marketCapRankTitle}>{marketCapRank}. </span>}
                 {symbolName || symbol}
               </span>
               <span className="symbol-code">{symbol}</span>

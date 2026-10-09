@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { parseKoreanFundamentals, parseYahooFundamentals, createFundamentalsHandler } from '../api/fundamentals.js';
 import { fundamentalMetrics } from '../src/utils/fundamentalMetrics.js';
 
-test('market cap and operating income use magnitude-based precision without changing revenue', () => {
+test('market cap, revenue and operating income use magnitude-based precision', () => {
   const cases = [
     [123.789, '124'], [100.001, '100'], [100, '100'],
     [12.345, '12.3'], [1.001, '1'], [1, '1'],
@@ -11,8 +11,8 @@ test('market cap and operating income use magnitude-based precision without chan
     [-123.789, '-124'], [-12.345, '-12.3'], [-0.12345, '-0.12'],
   ];
   for (const [amount, expected] of cases) {
-    const metrics = fundamentalMetrics({ marketCap: amount * 1e12, operatingIncome: amount * 1e12, currency: 'KRW' });
-    for (const key of ['marketCap', 'operatingIncome']) {
+    const metrics = fundamentalMetrics({ marketCap: amount * 1e12, revenue: amount * 1e12, operatingIncome: amount * 1e12, currency: 'KRW' });
+    for (const key of ['marketCap', 'revenue', 'operatingIncome']) {
       assert.equal(metrics.find(metric => metric.key === key).value, `${expected}조원`, `${key}: ${amount}`);
     }
   }
@@ -20,7 +20,7 @@ test('market cap and operating income use magnitude-based precision without chan
     revenue: 12.345678e12, marketCapCurrency: 'USD', currency: 'JPY' });
   assert.equal(metrics.find(metric => metric.key === 'marketCap').value, '12.3조USD');
   assert.equal(metrics.find(metric => metric.key === 'operatingIncome').value, '0.12조JPY');
-  assert.equal(metrics.find(metric => metric.key === 'revenue').value, '12.345678조JPY');
+  assert.equal(metrics.find(metric => metric.key === 'revenue').value, '12.3조JPY');
 });
 
 test('Korean annual actuals and forward consensus remain separate; EPS-based PEG is marked estimated', () => {

@@ -8,10 +8,11 @@ import cors from 'cors';
 import WebSocket from 'ws';
 import YahooFinance from 'yahoo-finance2';
 import { analyzeCharts } from '../api/_analyze.js';
-import { RANKING_UNIVERSES } from '../src/marketPresets.js';
+import { loadForeignRankings, RANKING_VERSION } from '../api/_foreignRankings.js';
 import { MAX_OHLCV_HISTORY } from '../src/utils/chartHistory.js';
 import stateHandler from '../api/state.js';
 import fundamentalsHandler from '../api/fundamentals.js';
+import ma200ScanHandler from '../api/ma200-scan.js';
 
 dotenv.config({ path: '.env.local', quiet: true });
 dotenv.config({ quiet: true });
@@ -52,11 +53,14 @@ app.use(cors());
 app.use(express.json({ limit: '25mb' }));
 app.all('/api/state', stateHandler);
 app.get('/api/fundamentals', fundamentalsHandler);
+app.all('/api/ma200-scan', ma200ScanHandler);
 
 let krxCache = { loadedAt: 0, items: [] };
 const ohlcvCache = new Map();
 const quoteCache = new Map();
 const top100Cache = new Map();
+const top100Requests = new Map();
+let top100SaveQueue = Promise.resolve();
 let kisTokenCache = { token: '', expiresAt: 0 };
 let kisApprovalCache = { key: '', expiresAt: 0 };
 const REALTIME_QUOTE_TTL_MS = 250;
@@ -1139,67 +1143,56 @@ async function fetchKoreanTop100(market) {
   return items;
 }
 
-function previousCloseMarketCap(quote) {
-  const shares = Number(quote?.sharesOutstanding ?? quote?.impliedSharesOutstanding);
-  const previousClose = Number(quote?.regularMarketPreviousClose);
-  if (Number.isFinite(shares) && Number.isFinite(previousClose) && shares > 0 && previousClose > 0) {
-    return shares * previousClose;
-  }
-  const marketCap = Number(quote?.marketCap);
-  return Number.isFinite(marketCap) && marketCap > 0 ? marketCap : null;
-}
-
 async function fetchForeignTop100(market) {
-  const universe = [...new Set(RANKING_UNIVERSES[market] || [])];
-  const expected = TOP100_COUNTS[market];
-  if (universe.length < expected) throw new Error(`${market} 종목 유니버스가 부족합니다.`);
-  const rows = await Promise.all(universe.map(async (symbol) => {
-    try {
-      const quote = await yahooCall(() => yahooFinance.quote(symbol));
-      const marketCap = previousCloseMarketCap(quote);
-      if (!marketCap) return null;
-      return {
-        symbol,
-        name: String(quote?.shortName || quote?.longName || quote?.displayName || symbol),
-        marketCap,
-      };
-    } catch (error) {
-      console.warn(`Top100 quote unavailable [${symbol}]:`, error.message);
-      return null;
-    }
-  }));
-  const ranked = rows
-    .filter(Boolean)
-    .sort((a, b) => b.marketCap - a.marketCap)
-    .slice(0, expected)
-    .map(({ symbol, name }) => ({ symbol, name }));
-  if (ranked.length !== expected) throw new Error(`${market} 전일 시가총액 목록이 ${ranked.length}개입니다.`);
-  return ranked;
+  return loadForeignRankings(market, {
+    quote: symbol => yahooCall(() => yahooFinance.quote(symbol, {},
+      { fetchOptions: { signal: AbortSignal.timeout(15000) } }), 0),
+    summary: symbol => yahooCall(() => yahooFinance.quoteSummary(symbol,
+      { modules: ['price', 'defaultKeyStatistics'] }, { fetchOptions: { signal: AbortSignal.timeout(15000) } }), 0),
+  });
 }
 
-async function loadTop100Snapshot(market) {
+async function loadTop100Snapshot(market, refresh = false) {
   const snapshotDate = previousTradingDate(market);
   const cacheKey = `${market}:${snapshotDate}`;
-  if (top100Cache.has(cacheKey)) return top100Cache.get(cacheKey);
+  const cache = top100Cache.get(cacheKey);
+  if (cache && (cache.complete !== false || (!refresh && Date.now() - Date.parse(cache.fetchedAt) < 60000))) return cache;
+  if (top100Requests.has(cacheKey)) return top100Requests.get(cacheKey);
+  const request = buildTop100Snapshot(market, snapshotDate, cacheKey, refresh);
+  top100Requests.set(cacheKey, request);
+  try { return await request; }
+  finally { top100Requests.delete(cacheKey); }
+}
 
+async function buildTop100Snapshot(market, snapshotDate, cacheKey, refresh) {
   const snapshots = await readTop100Snapshots();
   const stored = snapshots?.[cacheKey];
-  if (stored?.snapshotDate === snapshotDate && Array.isArray(stored.items) && stored.items.length === TOP100_COUNTS[market]) {
+  const domestic = market === 'kospi' || market === 'kosdaq';
+  if (stored?.snapshotDate === snapshotDate && Array.isArray(stored.items)
+    && (domestic || stored.rankingVersion === RANKING_VERSION)
+    && (stored.complete !== false ? stored.items.length === TOP100_COUNTS[market]
+      : !refresh && stored.items.length > 0 && Date.now() - Date.parse(stored.fetchedAt) < 60000)) {
     top100Cache.set(cacheKey, stored);
     return stored;
   }
 
-  const items = market === 'kospi' || market === 'kosdaq'
-    ? await fetchKoreanTop100(market)
+  const ranking = domestic
+    ? { items: await fetchKoreanTop100(market) }
     : await fetchForeignTop100(market);
   const snapshot = {
     market,
+    ...ranking,
     snapshotDate,
     fetchedAt: new Date().toISOString(),
-    items: items.map((item, index) => ({ ...item, rank: index + 1 })),
+    items: ranking.items.map((item, index) => ({ ...item, rank: index + 1 })),
   };
-  snapshots[cacheKey] = snapshot;
-  await saveTop100Snapshots(snapshots);
+  const save = top100SaveQueue.catch(() => {}).then(async () => {
+    const current = await readTop100Snapshots();
+    current[cacheKey] = snapshot;
+    await saveTop100Snapshots(current);
+  });
+  top100SaveQueue = save;
+  await save;
   top100Cache.set(cacheKey, snapshot);
   return snapshot;
 }
@@ -1210,7 +1203,7 @@ app.get('/api/top100', async (req, res) => {
     if (!Object.hasOwn(TOP100_COUNTS, market)) {
       return res.status(400).json({ error: 'market must be kospi, kosdaq, nasdaq, or nikkei' });
     }
-    const snapshot = await loadTop100Snapshot(market);
+    const snapshot = await loadTop100Snapshot(market, req.query.refresh === '1');
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     return res.json({ ...snapshot, count: snapshot.items.length });
   } catch (error) {

@@ -33,8 +33,12 @@ const NIKKEI50 = `7203.T 6758.T 6861.T 9984.T 8306.T 8035.T 6902.T 7267.T 9432.T
 
 // 서버가 전일 종가 시가총액으로 정렬할 해외 종목 유니버스.
 export const RANKING_UNIVERSES = {
-  nasdaq: NASDAQ100,
-  nikkei: NIKKEI50,
+  // 상장폐지/타 거래소 코드 제거. 조회 실패 시에도 목표 개수를 채울 수 있도록
+  // 후보를 넉넉히 확보하고 서버에서 공식 상장 목록과 대조한다.
+  nasdaq: [...NASDAQ100.filter(symbol => !['WBA', 'ONT', 'KKR', 'HUBS'].includes(symbol)),
+    ...'PLTR HOOD COIN SHOP GEHC NTES NXPI ROP AXON CSGP NICE SWKS WDC STX CTSH AEP MDGL UAL IBKR FSLR WTW FER RPRX NTRA RKLB'.split(' ')],
+  nikkei: [...NIKKEI50.filter(symbol => symbol !== '9613.T'),
+    ...'8316.T 6146.T 4519.T 4568.T 6273.T 2914.T 3382.T 7011.T 4543.T 6504.T 6702.T 6701.T 4523.T 6178.T 8804.T 4307.T 6645.T 1925.T 2502.T 2503.T'.split(' ')],
 };
 
 export const GROUPS = {

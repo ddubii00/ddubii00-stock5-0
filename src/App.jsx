@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ChartColumn from './components/ChartColumn';
 import SharedPositionAccess from './components/SharedPositionAccess';
+import Ma200Scanner from './components/Ma200Scanner';
 import { startSharedPositions, useSharedPositionConnection } from './state/sharedPositions';
 import { apiUrl } from './api';
 import { GROUPS, INDEX_ITEMS } from './marketPresets';
+import { parseRankedGroup } from './utils/rankedGroups';
 import './index.css';
 import './stock5-0-overrides.css';
 
@@ -115,15 +117,17 @@ function App() {
   const [rankedGroups, setRankedGroups] = useState({});
   const [rankedLoading, setRankedLoading] = useState({});
   const [rankedErrors, setRankedErrors] = useState({});
+  const [rankedWarnings, setRankedWarnings] = useState({});
   const [rankedRetryVersion, setRankedRetryVersion] = useState(0);
   const rankedRequestRef = useRef({});
+  const rankedRetryRef = useRef(0);
 
   useEffect(() => {
     document.title = 'stock5-0 지수정보';
     return startSharedPositions();
   }, []);
 
-  const loadRankedGroup = useCallback(async (groupKey, signal) => {
+  const loadRankedGroup = useCallback(async (groupKey, signal, refresh = false) => {
     const market = RANKED_MARKET_VIEWS[groupKey];
     if (!market) return;
     const requestId = (rankedRequestRef.current[groupKey] || 0) + 1;
@@ -131,16 +135,14 @@ function App() {
     setRankedLoading(current => ({ ...current, [groupKey]: true }));
     setRankedErrors(current => ({ ...current, [groupKey]: '' }));
     try {
-      const response = await fetch(apiUrl(`/top100?market=${market}`), { signal, cache: 'no-store' });
+      const response = await fetch(apiUrl(`/top100?market=${market}${refresh ? '&refresh=1' : ''}`), { signal, cache: 'no-store' });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.error || `Top 종목 조회 실패 (${response.status})`);
       const expected = groupKey === 'nikkei50' ? 50 : 100;
-      const items = Array.isArray(payload?.items) ? payload.items.slice(0, expected) : [];
-      if (items.length !== expected || items.some(item => !item?.symbol || !item?.name)) {
-        throw new Error(`전일 시가총액 목록이 ${items.length}개입니다.`);
-      }
+      const { items, warning } = parseRankedGroup(payload, expected);
       if (rankedRequestRef.current[groupKey] === requestId) {
         setRankedGroups(current => ({ ...current, [groupKey]: items }));
+        setRankedWarnings(current => ({ ...current, [groupKey]: warning }));
       }
     } catch (error) {
       if (error?.name !== 'AbortError' && rankedRequestRef.current[groupKey] === requestId) {
@@ -159,7 +161,7 @@ function App() {
       ? INDEX_ITEMS
       : rankedView
         ? (rankedGroups[view] || [])
-        : GROUPS[view].items
+        : (GROUPS[view]?.items || [])
   ), [rankedGroups, rankedView, view]);
 
   const selectedItems = useMemo(
@@ -184,9 +186,11 @@ function App() {
 
   const currentRankedGroup = rankedGroups[view];
   useEffect(() => {
-    if (!rankedView || currentRankedGroup) return undefined;
+    const refresh = rankedRetryVersion !== rankedRetryRef.current;
+    if (!rankedView || (currentRankedGroup && !refresh)) return undefined;
+    rankedRetryRef.current = rankedRetryVersion;
     const controller = new AbortController();
-    void loadRankedGroup(view, controller.signal);
+    void loadRankedGroup(view, controller.signal, refresh);
     return () => controller.abort();
     // Loading changes must not abort the request that set them.
   }, [loadRankedGroup, currentRankedGroup, rankedRetryVersion, rankedView, view]);
@@ -407,6 +411,7 @@ function App() {
             <option value="kosdaq100">3. KOSDAQ100</option>
             <option value="nasdaq100">4. NASDAQ100</option>
             <option value="nikkei50">5. 니케이 Top 50</option>
+            <option value="ma200">6. 200이평 돌파/붕괴</option>
           </select>
         </div>
 
@@ -430,14 +435,22 @@ function App() {
         </button>
       </header>
 
-      <div className="dashboard-grid">
+      {view === 'ma200' ? <Ma200Scanner /> : <div className="dashboard-grid">
         {rankedView && rankedLoading[view] && selectedItems.length === 0 && (
           <div className="top100-status" role="status">전일 시가총액 순위 불러오는 중...</div>
         )}
-        {rankedView && !rankedLoading[view] && rankedErrors[view] && selectedItems.length === 0 && (
+        {rankedView && !rankedLoading[view] && rankedErrors[view] && (
           <div className="top100-status error" role="alert">
             {rankedErrors[view]}
             <button type="button" onClick={() => setRankedRetryVersion(version => version + 1)}>다시 시도</button>
+          </div>
+        )}
+        {rankedView && selectedItems.length > 0 && rankedWarnings[view] && (
+          <div className="top100-status" role="status">
+            {rankedWarnings[view]}
+            <button type="button" disabled={rankedLoading[view]} onClick={() => setRankedRetryVersion(version => version + 1)}>
+              {rankedLoading[view] ? '조회 중' : '누락 종목 다시 조회'}
+            </button>
           </div>
         )}
         {selectedItems.map((item, index) => {
@@ -448,13 +461,16 @@ function App() {
             defaultSymbol={item.symbol}
             defaultName={item.name}
             marketCapRank={rankedView ? (item.rank || index + 1) : null}
+            marketCapRankTitle={['nasdaq100', 'nikkei50'].includes(view)
+              ? '대형주 후보군 내 전일 종가 추정 시가총액 순위 (전체 시장 확정 순위 아님)'
+              : '시가총액 순위'}
             showBollinger={showBollinger}
             globalWeekly={globalWeekly}
             showPositionControls={view !== 'index'}
             useStoredSelection={false}
           />;
         })}
-      </div>
+      </div>}
     </div>
   );
 }
