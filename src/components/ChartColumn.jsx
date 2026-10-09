@@ -882,7 +882,7 @@ function useSavedTrendLines(symbol) {
   return [current.lines, save];
 }
 
-export default function ChartColumn({ id, defaultSymbol, defaultName, marketCapRank = null, marketCapRankTitle = '시가총액 순위', showBollinger = false, globalWeekly = false, useStoredSelection = true, showPositionControls = false }) {
+export default function ChartColumn({ id, defaultSymbol, defaultName, marketCapRank = null, marketCapRankTitle = '시가총액 순위', showBollinger = false, globalWeekly = false, useStoredSelection = true, showPositionControls = false, autoSize = false }) {
   // 프리셋 차트는 이전 검색 종목(localStorage) 대신 지정된 지수를 우선 사용한다.
   const storageKey = `stock5_symbol_${id}`;
   const storedRaw = useStoredSelection ? localStorage.getItem(storageKey) : null;
@@ -1101,6 +1101,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, marketCapR
     const w = (ref) => ref.current?.clientWidth || 400;
     const chartOptions = {
       ...BASE_OPTS,
+      autoSize,
       timeScale: {
         ...BASE_OPTS.timeScale,
         tickMarkFormatter: (time) => formatAxisTime(time, timeZoneRef.current),
@@ -1354,7 +1355,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, marketCapR
     // 리사이즈
     const onResize = () => {
       [[pc, priceRef], [vc, volumeRef], [mc, macdRef], [ic, ichiRef]].forEach(([chart, ref]) => {
-        if (ref.current) chart.applyOptions({ width: ref.current.clientWidth });
+        if (ref.current && !autoSize) chart.applyOptions({ width: ref.current.clientWidth });
       });
       drawMacdBackground();
       priceRef.current?.dispatchEvent(new Event('trend-data'));
@@ -1385,7 +1386,7 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, marketCapR
         spanB: new Map(),
       };
     };
-  }, [drawMacdBackground]);
+  }, [drawMacdBackground, autoSize]);
 
   // ─── Ichimoku cloud ──────────────────────────────────
   const drawCloud = useCallback((spanAData, spanBData) => {

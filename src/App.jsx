@@ -435,7 +435,7 @@ function App() {
         </button>
       </header>
 
-      {view === 'ma200' ? <Ma200Scanner /> : <div className="dashboard-grid">
+      {view === 'ma200' ? <Ma200Scanner showBollinger={showBollinger} globalWeekly={globalWeekly} /> : <div className="dashboard-grid">
         {rankedView && rankedLoading[view] && selectedItems.length === 0 && (
           <div className="top100-status" role="status">전일 시가총액 순위 불러오는 중...</div>
         )}

@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiUrl } from '../api';
 import { SCAN_MARKETS } from '../utils/ma200Scan';
+import StockChartDialog from './StockChartDialog';
 
 const formatPrice = value => Number.isFinite(value) ? value.toLocaleString('ko-KR', { maximumFractionDigits: 2 }) : '—';
 const excludedReason = (row, interval) => row.status === 'short-history'
   ? `${interval === 'week' ? '주봉' : '일봉'} 이력 부족 (${row.available}/201)`
   : row.status === 'stale' ? `최근 거래일 불일치 (${row.latestDate || '자료 없음'})` : row.error || '조회 실패';
 
-export default function Ma200Scanner() {
+export default function Ma200Scanner({ showBollinger = false, globalWeekly = false }) {
   const [interval, setInterval] = useState('day');
   const [direction, setDirection] = useState('all');
   const [marketFilter, setMarketFilter] = useState('all');
@@ -17,6 +18,8 @@ export default function Ma200Scanner() {
   const [refresh, setRefresh] = useState(0);
   const consumedRefresh = useRef(0);
   const [page, setPage] = useState(1);
+  const [selectedStock, setSelectedStock] = useState(null);
+  const closeChart = useCallback(() => setSelectedStock(null), []);
   useEffect(() => {
     const controller = new AbortController();
     let timer;
@@ -124,7 +127,9 @@ export default function Ma200Scanner() {
       <thead><tr><th>종목</th><th>시장 / 통화</th><th>구분</th><th>비교일 (이전 → 최근)</th>
         <th>이전 종가</th><th>이전 200이평</th><th>최근 종가</th><th>최근 200이평</th><th>최근 괴리율</th></tr></thead>
       <tbody>{visible.map(row => <tr key={`${row.market}-${row.symbol}`}>
-        <td><strong>{row.name}</strong><small>{row.symbol}</small></td><td>{row.marketLabel}<small>{SCAN_MARKETS[row.market].currency}</small></td>
+        <td><button type="button" className="scan-stock-link" aria-haspopup="dialog"
+          onClick={() => setSelectedStock({ symbol: row.symbol, name: row.name, weekly: interval === 'week' })}>{row.name}</button>
+          <small>{row.symbol}</small></td><td>{row.marketLabel}<small>{SCAN_MARKETS[row.market].currency}</small></td>
         <td className={row.signal === 'breakout' ? 'scan-up' : 'scan-down'}>{row.signal === 'breakout' ? '돌파' : '붕괴'}</td>
         <td>{row.previous.date} → {row.latest.date}</td><td>{formatPrice(row.previous.close)}</td><td>{formatPrice(row.previous.ma200)}</td>
         <td>{formatPrice(row.latest.close)}</td><td>{formatPrice(row.latest.ma200)}</td>
@@ -133,5 +138,7 @@ export default function Ma200Scanner() {
     </table></div>
     {matches.length === 0 && <p className="scan-empty">{!data || running ? '검색이 진행되면 조건에 맞는 종목을 이곳에 표시합니다.'
       : data.status !== 'done' ? '현재 발견된 결과가 없습니다. 미완료 시장과 조회 오류를 확인하세요.' : '계산 가능한 종목 중 선택한 조건에 맞는 종목이 없습니다.'}</p>}
+    {selectedStock && <StockChartDialog key={selectedStock.symbol} stock={selectedStock}
+      showBollinger={showBollinger} globalWeekly={globalWeekly} onClose={closeChart} />}
   </main>;
 }
