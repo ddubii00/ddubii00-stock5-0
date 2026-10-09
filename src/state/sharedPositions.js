@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { apiUrl } from '../api';
+import { apiUrl } from '../api.js';
 
 const PASSWORD_KEY = 'stock5-0-password';
 let password = '';
@@ -13,9 +13,10 @@ const publish = changes => {
 };
 const subscribe = listener => { listeners.add(listener); return () => listeners.delete(listener); };
 export const useSharedPositions = () => useSyncExternalStore(subscribe, () => snapshot);
+// The app gate only needs authentication changes, not every record/save update.
+export const useSharedPositionConnection = () => useSyncExternalStore(subscribe, () => snapshot.connected);
 
 export const openPositionLogin = () => publish({ loginOpen: true, authError: '' });
-export const closePositionLogin = () => publish({ loginOpen: false });
 
 async function stateRequest(method, body, credential = password) {
   const response = await fetch(apiUrl('/state'), {
@@ -77,8 +78,9 @@ export async function refreshSharedPositions() {
 }
 
 export function startSharedPositions() {
-  try { password = localStorage.getItem(PASSWORD_KEY) || ''; } catch { /* Ask for login on demand. */ }
-  void refreshSharedPositions();
+  try { password = localStorage.getItem(PASSWORD_KEY) || ''; } catch { /* Ask for login at entry. */ }
+  if (password) void connectSharedPositions(password);
+  else openPositionLogin();
   const refresh = () => { if (!document.hidden) void refreshSharedPositions(); };
   const timer = setInterval(refresh, 15_000);
   window.addEventListener('focus', refresh);

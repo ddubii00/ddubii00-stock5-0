@@ -11,6 +11,7 @@ import { calculateMACD, calculateIchimoku, calculateMA, calculateBollingerBands,
 import StockSearch from './StockSearch';
 import TrendLineOverlay from './TrendLineOverlay';
 import PositionButtons from './PositionButtons';
+import FundamentalsRow from './FundamentalsRow';
 import { useChartTimeframe } from '../utils/chartTimeframe';
 import { useChartVisibility } from '../utils/chartVisibility';
 import { cleanTrendLines } from '../utils/trendLines';
@@ -881,7 +882,7 @@ function useSavedTrendLines(symbol) {
   return [current.lines, save];
 }
 
-export default function ChartColumn({ id, defaultSymbol, defaultName, showBollinger = false, globalWeekly = false, useStoredSelection = true, showPositionControls = false }) {
+export default function ChartColumn({ id, defaultSymbol, defaultName, marketCapRank = null, showBollinger = false, globalWeekly = false, useStoredSelection = true, showPositionControls = false }) {
   // 프리셋 차트는 이전 검색 종목(localStorage) 대신 지정된 지수를 우선 사용한다.
   const storageKey = `stock5_symbol_${id}`;
   const storedRaw = useStoredSelection ? localStorage.getItem(storageKey) : null;
@@ -1982,7 +1983,11 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
         {symbol && (
           <div className={`symbol-row${showPositionControls ? ' symbol-row--with-positions' : ''}`}>
             <div className="symbol-details">
-              <span className="symbol-name">{symbolName || symbol}</span>
+              <span className="symbol-name">
+                {symbol === defaultSymbol && Number.isInteger(marketCapRank) && marketCapRank > 0
+                  && <span className="symbol-rank">{marketCapRank}. </span>}
+                {symbolName || symbol}
+              </span>
               <span className="symbol-code">{symbol}</span>
               {quote?.symbol === symbol && (
                 <span className={`quote-chip ${quoteTone(quote)}`}>
@@ -2080,6 +2085,8 @@ export default function ChartColumn({ id, defaultSymbol, defaultName, showBollin
           <span className="legend-swatch bollinger" aria-hidden="true" />볼린저밴드
         </button>
       </div>
+
+      {showPositionControls && symbol && <FundamentalsRow symbol={symbol} />}
 
       {/* 차트 영역 */}
       <div className="charts-area">

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ChartColumn from './components/ChartColumn';
 import SharedPositionAccess from './components/SharedPositionAccess';
-import { startSharedPositions } from './state/sharedPositions';
+import { startSharedPositions, useSharedPositionConnection } from './state/sharedPositions';
 import { apiUrl } from './api';
 import { GROUPS, INDEX_ITEMS } from './marketPresets';
 import './index.css';
@@ -99,6 +99,7 @@ function LazyChartColumn(props) {
 }
 
 function App() {
+  const recordsConnected = useSharedPositionConnection();
   const [view, setView] = useState('index');
   const [presetVersion, setPresetVersion] = useState(0);
   const [marketSummary, setMarketSummary] = useState({
@@ -312,6 +313,8 @@ function App() {
     };
   }, [sourceItems, resolvedNames]);
 
+  if (!recordsConnected) return <SharedPositionAccess />;
+
   return (
     <div className="app">
       <header className="app-header">
@@ -392,7 +395,6 @@ function App() {
           )}
         </div>
 
-        <SharedPositionAccess />
         <div className="index-view-control">
           <select
             id="index-view"
@@ -445,6 +447,7 @@ function App() {
             id={`preset-${view}-${presetVersion}-${index + 1}`}
             defaultSymbol={item.symbol}
             defaultName={item.name}
+            marketCapRank={rankedView ? (item.rank || index + 1) : null}
             showBollinger={showBollinger}
             globalWeekly={globalWeekly}
             showPositionControls={view !== 'index'}
