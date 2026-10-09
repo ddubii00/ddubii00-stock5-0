@@ -71,8 +71,18 @@ function compareBars(bars, reference, interval) {
   };
 }
 
-export function analyzeMa200History(history, reference) {
+export function analyzeMa200History(history, reference, weeklyHistory = null) {
   const daily = normalizeDailyHistory(history).filter(bar => bar.time <= reference.day.latest);
+  let weekly = weeklyCloses(daily);
+  if (weeklyHistory) {
+    const olderWeeks = weeklyCloses(normalizeDailyHistory(weeklyHistory)).filter(bar => bar.time <= reference.week.latest);
+    // Keep recent closes and actual last-trading dates from the daily snapshot.
+    // Native weekly timestamps are usually Monday, not the last trading day.
+    weekly = [...new Map([...olderWeeks, ...weekly].map(bar => [bar.time, bar])).values()]
+      .sort((a, b) => a.time.localeCompare(b.time));
+  }
+  const week = compareBars(weekly, reference.week, 'week');
+  if (weeklyHistory) week.supplemented = true;
   return { day: compareBars(daily, reference.day, 'day'),
-    week: compareBars(weeklyCloses(daily), reference.week, 'week') };
+    week };
 }

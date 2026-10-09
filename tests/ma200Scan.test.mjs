@@ -182,3 +182,76 @@ test('scanner endpoint authenticates before starting expensive jobs and rejects 
   assert.equal((await request({ method: 'POST', query: {} }, serverless)).status, 503);
   assert.equal(starts, 1);
 });
+
+test('native weekly history restores old bars while recent daily closes/dates stay authoritative', () => {
+  const bars = history();
+  const reference = scanReference(bars);
+  const native = weeklyCloses(bars).map(row => ({ time: row.time, close: row.close }));
+  native.at(-1).close = 9999; // A later intraday/week update must not change the snapshot.
+  const shortDaily = bars.slice(-400);
+  assert.equal(analyzeMa200History(shortDaily, reference).week.status, 'short-history');
+  const supplemented = analyzeMa200History(shortDaily, reference, native);
+  const full = analyzeMa200History(bars, reference);
+  assert.deepEqual(supplemented.day, full.day);
+  assert.deepEqual(supplemented.week, { ...full.week, supplemented: true });
+  assert.equal(analyzeMa200History(shortDaily.slice(0, -1), reference, native).week.status, 'stale');
+  const recentListing = shortDaily.slice(-150);
+  const short = analyzeMa200History(recentListing, reference, weeklyCloses(recentListing));
+  assert.equal(short.week.status, 'short-history');
+  assert.equal(short.week.supplemented, true);
+  assert.ok(short.week.available < 201);
+});
+
+test('supplementation is requested only for weekly-short stocks, stays bounded and keeps daily signals', async () => {
+  const bars = history(), reference = scanReference(bars);
+  const native = weeklyCloses(bars);
+  let supplements = 0, active = 0, maximum = 0;
+  const scanner = createMa200Scanner({
+    loadUniverse: async key => ({ items: [{ symbol: `${key}-old`, name: 'Old stock' }, { symbol: `${key}-new`, name: 'New stock' }] }),
+    loadHistory: async symbol => symbol.startsWith('^') ? bars.slice(-30) : symbol.endsWith('old') ? bars.slice(-400) : bars.slice(-150),
+    loadWeeklyHistory: async symbol => {
+      supplements++; active++; maximum = Math.max(maximum, active);
+      await new Promise(resolve => setTimeout(resolve, 1)); active--;
+      return symbol.endsWith('old') ? native : native.slice(-30);
+    },
+  });
+  await scanner.start(); await scanner.settled();
+  const week = await scanner.snapshot('week'), day = await scanner.snapshot('day');
+  assert.equal(supplements, 8);
+  assert.equal(maximum, 2);
+  assert.ok(week.markets.every(m => m.valid === 1 && m.exclusionCounts['short-history'] === 1));
+  assert.ok(day.markets.every(m => m.valid === 1));
+  assert.deepEqual(week.markets[0].results[0].latest.date, reference.week.latestDate);
+});
+
+test('weekly source outages remain separate errors and stop supplemental calls without stopping daily scan', async () => {
+  const bars = history();
+  let weeklyCalls = 0;
+  const scanner = createMa200Scanner({
+    loadUniverse: async key => ({ items: key === 'nasdaq' ? Array.from({ length: 12 }, (_, i) => ({ symbol: `NEW${i}`, name: 'Stock' })) : [{ symbol: key, name: key }] }),
+    loadHistory: async symbol => symbol.startsWith('^') ? bars.slice(-30) : symbol.startsWith('NEW') ? bars.slice(-400) : bars,
+    loadWeeklyHistory: async () => { weeklyCalls++; throw new Error('HTTP 429'); },
+  });
+  await scanner.start(); await scanner.settled();
+  const day = await scanner.snapshot('day'), week = await scanner.snapshot('week');
+  assert.equal(day.status, 'done');
+  assert.equal(week.status, 'partial');
+  assert.equal(day.markets.find(m => m.key === 'nasdaq').valid, 12);
+  assert.equal(week.markets.find(m => m.key === 'nasdaq').exclusionCounts['short-history'], 0);
+  assert.equal(week.markets.find(m => m.key === 'nasdaq').exclusionCounts.error, 12);
+  assert.ok(weeklyCalls <= 6, 'at most five failed calls plus one already in flight');
+});
+
+test('legacy checkpoint rechecks only weekly-short rows when the same session still applies', async () => {
+  const deps = providers();
+  let saved;
+  const initial = createMa200Scanner({ ...deps, writeCheckpoint: async value => { saved = value; } });
+  await initial.start(); await initial.settled();
+  saved.version = 1;
+  saved.markets.forEach(m => { m.rows[0].week = { status: 'short-history', available: 50 }; });
+  const before = deps.stats().calls;
+  const upgraded = createMa200Scanner({ ...deps, readCheckpoint: async () => saved });
+  await upgraded.start(); await upgraded.settled();
+  assert.equal(deps.stats().calls - before, 8, 'four benchmarks and only four legacy weekly-short stocks');
+  assert.equal((await upgraded.snapshot('week')).status, 'done');
+});

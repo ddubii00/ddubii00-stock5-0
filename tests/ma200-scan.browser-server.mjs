@@ -3,6 +3,7 @@ import express from 'express';
 import stateHandler from '../api/state.js';
 import { createMa200Scanner } from '../api/_ma200Scanner.js';
 import { createScanHandler } from '../api/ma200-scan.js';
+import { weeklyCloses } from '../src/utils/ma200Scan.js';
 
 const date = new Date('2026-10-08T00:00:00Z');
 const bars = [];
@@ -13,7 +14,8 @@ while (bars.length < 1250) {
 const names = { kospi: '코스피', kosdaq: '코스닥', nasdaq: '나스닥', japan: '일본' };
 const scanner = createMa200Scanner({
   loadUniverse: async market => ({ source: 'synthetic-test-only', sourceDate: '2026-10-09',
-    items: Array.from({ length: 30 }, (_, i) => ({ symbol: `${market.toUpperCase()}${i}`, name: `검증 ${names[market]} 종목 ${i + 1}` })) }),
+    items: Array.from({ length: 30 }, (_, i) => ({ symbol: `${market.toUpperCase()}${i}`, name: i === 0 ? `검증 ${names[market]} 아주 긴 종목명 자릿수 확인` : `검증 ${names[market]} 종목 ${i + 1}` })) }),
+  loadWeeklyHistory: async () => weeklyCloses(bars.slice(-150)),
   loadHistory: async symbol => {
     await new Promise(resolve => setTimeout(resolve, 100));
     const rows = bars.map(bar => ({ ...bar }));
