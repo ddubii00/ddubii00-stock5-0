@@ -667,7 +667,7 @@ html, body {
   border-bottom: 1px solid var(--border);
   color: var(--muted);
   background: var(--panel2);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.4;
   white-space: nowrap;
   overflow-x: auto;
@@ -683,7 +683,7 @@ html, body {
 .scan-table:has(.stock-financial-col) { min-width: 2000px; width: max(100%, 2000px); }
 .scan-table.saved-stock-table { min-width: 1140px; width: 100%; }
 .saved-stock-table .stock-financial-col { width: auto; }
-.stock-financial-cell .fundamentals-row { border: 0; background: transparent; padding: 0; overflow: visible; font-size: 11px; }
+.stock-financial-cell .fundamentals-row { border: 0; background: transparent; padding: 0; overflow: visible; font-size: 12px; }
 .scan-table .fundamentals-metric > span { display: inline; font-size: inherit; color: var(--muted); }
 .saved-record-cell .position-mini-controls { justify-content: flex-start; }
 .saved-stock-group { margin-top: 18px; }
