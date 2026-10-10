@@ -48,7 +48,7 @@
       }
       return serverFetch(input, options);
     }
-    if (url.pathname.endsWith('/ma200-scan')) return serverFetch(input, options);
+    if (url.pathname.endsWith('/ma200-scan') || url.pathname.endsWith('/line-break-scan')) return serverFetch(input, options);
     let payload;
     if (url.pathname.endsWith('/quote')) {
       payload = { price: 160, change: 1, changePct: .63 };

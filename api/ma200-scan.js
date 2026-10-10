@@ -5,7 +5,7 @@ import { authorized } from './_state.js';
 import { createMa200Scanner } from './_ma200Scanner.js';
 
 const checkpointPath = () => path.resolve(process.env.STOCK5_DATA_DIR || 'data', 'stock5-0-ma200-scan.json');
-const scanner = createMa200Scanner({
+export const scanner = createMa200Scanner({
   readCheckpoint: async () => {
     try { return JSON.parse(await readFile(checkpointPath(), 'utf8')); }
     catch (error) { if (error.code === 'ENOENT') return null; throw error; }
@@ -19,7 +19,7 @@ const scanner = createMa200Scanner({
   },
 });
 
-export function createScanHandler(service = scanner, isAuthorized = authorized, isServerless = () => process.env.VERCEL === '1') {
+export function createScanHandler(service = scanner, isAuthorized = authorized, isServerless = () => process.env.VERCEL === '1', indicator = 'ma200') {
   return async (req, res) => {
     if (!isAuthorized(req)) return res.status(401).json({ error: 'invalid password' });
     if (isServerless()) return res.status(503).json({ error: '전체 시장 백그라운드 검색은 Oracle 상시 서버에서 지원합니다.' });
@@ -27,9 +27,9 @@ export function createScanHandler(service = scanner, isAuthorized = authorized, 
     if (!['day', 'week'].includes(interval)) return res.status(400).json({ error: 'interval must be day or week' });
     if (!['GET', 'POST'].includes(req.method)) return res.status(405).json({ error: 'method not allowed' });
     try {
-      if (req.method === 'POST' || req.query?.start === '1') await service.start(req.method === 'POST');
+      if (req.method === 'POST' || req.query?.start === '1') await service.start(req.method === 'POST', indicator);
       res.setHeader('Cache-Control', 'no-store');
-      return res.json(await service.snapshot(interval));
+      return res.json(await service.snapshot(interval, indicator));
     } catch (error) { return res.status(502).json({ error: error.message }); }
   };
 }

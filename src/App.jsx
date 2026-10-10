@@ -112,6 +112,7 @@ function App() {
     usdKrw: null,
   });
   const [showBollinger, setShowBollinger] = useState(false);
+  const [showLineBreak, setShowLineBreak] = useState(false);
   const [globalWeekly, setGlobalWeekly] = useState(false);
   const [resolvedNames, setResolvedNames] = useState({});
   const [rankedGroups, setRankedGroups] = useState({});
@@ -412,6 +413,7 @@ function App() {
             <option value="nasdaq100">4. NASDAQ100</option>
             <option value="nikkei50">5. 니케이 Top 50</option>
             <option value="ma200">6. 200이평 돌파/붕괴</option>
+            <option value="line-break">7. 삼선전환도</option>
           </select>
         </div>
 
@@ -424,6 +426,9 @@ function App() {
         >
           BB
         </button>
+        <button type="button" className={`header-bb-button${showLineBreak ? ' active' : ''}`}
+          onClick={() => setShowLineBreak(enabled => !enabled)} aria-pressed={showLineBreak}
+          title="전체 메인 차트 삼선전환도 표시/해제 (일목균형표 유지)">삼선</button>
         <button
           type="button"
           className={`header-bb-button${globalWeekly ? ' active' : ''}`}
@@ -435,7 +440,7 @@ function App() {
         </button>
       </header>
 
-      {view === 'ma200' ? <Ma200Scanner showBollinger={showBollinger} globalWeekly={globalWeekly} /> : <div className="dashboard-grid">
+      {['ma200', 'line-break'].includes(view) ? <Ma200Scanner key={view} indicator={view} showBollinger={showBollinger} showLineBreak={showLineBreak} globalWeekly={globalWeekly} /> : <div className="dashboard-grid">
         {rankedView && rankedLoading[view] && selectedItems.length === 0 && (
           <div className="top100-status" role="status">전일 시가총액 순위 불러오는 중...</div>
         )}
@@ -465,6 +470,7 @@ function App() {
               ? '대형주 후보군 내 전일 종가 추정 시가총액 순위 (전체 시장 확정 순위 아님)'
               : '시가총액 순위'}
             showBollinger={showBollinger}
+            showLineBreak={showLineBreak}
             globalWeekly={globalWeekly}
             showPositionControls={view !== 'index'}
             useStoredSelection={false}

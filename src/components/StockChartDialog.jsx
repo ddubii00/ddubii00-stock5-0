@@ -2,7 +2,7 @@ import { memo, useId, useLayoutEffect, useRef } from 'react';
 import ChartColumn from './ChartColumn';
 import { openChartDialog } from '../utils/chartDialog';
 
-function StockChartDialog({ stock, showBollinger, globalWeekly, onClose }) {
+function StockChartDialog({ stock, showBollinger, showLineBreak, globalWeekly, onClose }) {
   const dialogRef = useRef(null);
   const bodyRef = useRef(null);
   const cardWidthRef = useRef(null);
@@ -53,6 +53,7 @@ function StockChartDialog({ stock, showBollinger, globalWeekly, onClose }) {
     <div ref={bodyRef} className="scan-chart-dialog-body">
       <ChartColumn id={`scan-popup-${stock.symbol}`} defaultSymbol={stock.symbol} defaultName={stock.name}
         useStoredSelection={false} showPositionControls autoSize showBollinger={showBollinger}
+        showLineBreak={showLineBreak}
         globalWeekly={stock.weekly || globalWeekly} />
     </div>
     </dialog>

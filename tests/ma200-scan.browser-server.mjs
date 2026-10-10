@@ -12,6 +12,7 @@ while (bars.length < 1250) {
   date.setUTCDate(date.getUTCDate() - 1);
 }
 const names = { kospi: '코스피', kosdaq: '코스닥', nasdaq: '나스닥', japan: '일본' };
+const recentWeeks = weeklyCloses(bars).slice(-4).map(row => row.time);
 const scanner = createMa200Scanner({
   loadUniverse: async market => ({ source: 'synthetic-test-only', sourceDate: '2026-10-09',
     items: Array.from({ length: 30 }, (_, i) => ({ symbol: `${market.toUpperCase()}${i}`, name: i === 0 ? `검증 ${names[market]} 아주 긴 종목명 자릿수 확인` : `검증 ${names[market]} 종목 ${i + 1}` })) }),
@@ -23,8 +24,12 @@ const scanner = createMa200Scanner({
       if (symbol.endsWith('29')) return rows.slice(-150);
       if (symbol.endsWith('28')) return rows.slice(0, -1);
       const up = Number(symbol.match(/\d+$/)?.[0]) % 2 === 0;
-      rows.at(-2).close = up ? 90 : 110;
-      rows.at(-1).close = up ? 110 : 90;
+      for (const row of rows) {
+        const index = recentWeeks.indexOf(weeklyCloses([row])[0].time);
+        if (index >= 0) row.close = (up ? [90, 80, 70, 70] : [110, 120, 130, 130])[index];
+      }
+      const tail = up ? [80, 75, 70, 110] : [120, 125, 130, 90];
+      rows.slice(-4).forEach((row, i) => { row.close = tail[i]; });
     }
     return rows;
   },
@@ -33,4 +38,5 @@ const app = express();
 app.use(express.json());
 app.all('/api/state', stateHandler);
 app.all('/api/ma200-scan', createScanHandler(scanner));
+app.all('/api/line-break-scan', createScanHandler(scanner, undefined, undefined, 'line-break'));
 app.listen(3001, '127.0.0.1', () => console.log('Isolated MA200 browser fixture listening on 3001'));

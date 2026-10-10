@@ -71,7 +71,7 @@ function compareBars(bars, reference, interval) {
   };
 }
 
-export function analyzeMa200History(history, reference, weeklyHistory = null) {
+export function scanPeriods(history, reference, weeklyHistory = null) {
   const daily = normalizeDailyHistory(history).filter(bar => bar.time <= reference.day.latest);
   let weekly = weeklyCloses(daily);
   if (weeklyHistory) {
@@ -81,6 +81,11 @@ export function analyzeMa200History(history, reference, weeklyHistory = null) {
     weekly = [...new Map([...olderWeeks, ...weekly].map(bar => [bar.time, bar])).values()]
       .sort((a, b) => a.time.localeCompare(b.time));
   }
+  return { daily, weekly };
+}
+
+export function analyzeMa200History(history, reference, weeklyHistory = null) {
+  const { daily, weekly } = scanPeriods(history, reference, weeklyHistory);
   const week = compareBars(weekly, reference.week, 'week');
   if (weeklyHistory) week.supplemented = true;
   return { day: compareBars(daily, reference.day, 'day'),

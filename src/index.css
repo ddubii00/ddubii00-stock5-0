@@ -687,6 +687,8 @@ html, body {
 .scan-market-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .scan-stock-link { display: block; max-width: 15em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; text-align: left; }
 .scan-stock-link:hover { text-decoration: underline; }
+.macd-blank { background: var(--panel2); }
+.line-break-empty { position: absolute; top: 45%; left: 12px; z-index: 2; color: var(--muted); font-size: 12px; pointer-events: none; }
 .scan-stock-link:focus-visible, .scan-chart-dialog-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .scan-chart-size-probe { position: fixed; top: 0; left: 0; right: 0; height: 0; padding-block: 0; visibility: hidden; pointer-events: none; overflow: hidden; }
 .scan-chart-dialog { width: min(1080px, calc(100% - 24px)); max-width: none; max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); margin: auto; padding: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); color: var(--text); box-shadow: 0 22px 70px rgba(15, 23, 42, .28); overflow: hidden; }

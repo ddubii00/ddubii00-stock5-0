@@ -1,10 +1,11 @@
 import YahooFinance from 'yahoo-finance2';
 import { loadScanUniverse } from './_scanUniverse.js';
 import { SCAN_MARKETS, analyzeMa200History, normalizeDailyHistory, scanReference } from '../src/utils/ma200Scan.js';
+import { analyzeLineBreakHistory } from '../src/utils/lineBreakScan.js';
 
 const yahoo = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 const HISTORY_LIMIT = 1250; // Enough daily closes for 201 weekly bars, including holidays.
-const SCAN_VERSION = 2;
+const SCAN_VERSION = 3;
 const CACHE_MS = 15 * 60 * 1000;
 
 export async function fetchScanHistory(symbol, market, limit = HISTORY_LIMIT) {
@@ -74,7 +75,7 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
   };
   async function restoreOnce() {
     if (!restore) restore = Promise.resolve().then(readCheckpoint).then(saved => {
-      if ([1, SCAN_VERSION].includes(saved?.version) && Array.isArray(saved.markets) && saved.markets.length === 4
+      if ([1, 2, SCAN_VERSION].includes(saved?.version) && Array.isArray(saved.markets) && saved.markets.length === 4
         && saved.markets.every(m => Object.hasOwn(SCAN_MARKETS, m.key) && Array.isArray(m.rows))) {
         state = saved;
         if (state.status === 'running') state.status = 'interrupted';
@@ -91,7 +92,7 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
     }).catch(error => { state = { status: 'restore-error', persistenceError: error.message, markets: [] }; });
     await restore;
   }
-  async function run(job, previous) {
+  async function run(job, previous, needsLineBreak) {
     // Only two history requests at once, including the market reference histories.
     const activeMarkets = job.markets;
     let marketCursor = 0;
@@ -110,7 +111,7 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
           const saved = previous?.status === 'interrupted' && previous.markets.find(m => m.key === market.key);
           if (saved?.reference?.day.latest === market.reference.day.latest
             && saved.reference.day.previous === market.reference.day.previous) {
-            market.rows = saved.rows.filter(row => unique.has(row.symbol));
+            market.rows = saved.rows.filter(row => unique.has(row.symbol) && (!needsLineBreak || row.lineBreak));
           }
           market.completed = market.rows.length;
           market.phase = 'scanning';
@@ -139,6 +140,7 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
           // Validate rather than silently filling missing candles or calculating a short MA.
           normalizeDailyHistory(history);
           let data = analyzeMa200History(history, market.reference);
+          let lineBreak = analyzeLineBreakHistory(history, market.reference);
           if (data.week.status === 'short-history') {
             if (market.weeklySourceError) {
               data.week = { status: 'error', error: market.weeklySourceError };
@@ -147,6 +149,7 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
                 const weekly = await loadWeeklyHistory(item.symbol, market.key, 300);
                 if (!Array.isArray(weekly) || !weekly.length) throw new Error('주봉 추가 조회 결과가 비어 있습니다.');
                 data = analyzeMa200History(history, market.reference, weekly);
+                lineBreak = analyzeLineBreakHistory(history, market.reference, weekly);
                 market.weeklyFailuresInRow = 0;
               } catch (error) {
                 data.week = { status: 'error', error: `주봉 추가 조회 실패: ${error.message}` };
@@ -158,10 +161,11 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
               }
             }
           }
-          market.rows.push({ ...item, ...data, fetchedAt: isoNow() });
+          market.rows.push({ ...item, ...data, lineBreak, fetchedAt: isoNow() });
           market.failuresInRow = 0;
         } catch (error) {
-          market.rows.push({ ...item, day: { status: 'error', error: error.message }, week: { status: 'error', error: error.message } });
+          const failed = { status: 'error', error: error.message };
+          market.rows.push({ ...item, day: failed, week: failed, lineBreak: { day: failed, week: failed } });
           const systemic = /429|5\d\d|timeout|timed.?out|abort|fetch failed|network|ECONN|ENOTFOUND/i.test(error.message);
           market.failuresInRow = systemic ? (market.failuresInRow || 0) + 1 : 0;
           if (market.failuresInRow >= 5) {
@@ -180,33 +184,40 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
     await checkpoint(true);
   }
 
-  async function start(force = false) {
+  async function start(force = false, indicator = 'ma200') {
     await restoreOnce();
     if (runner) return;
-    if (!force && ['done', 'partial'].includes(state?.status) && now() - Date.parse(state.completedAt) < CACHE_MS) return;
-    const previous = state;
+    const needsLineBreak = indicator === 'line-break' && state?.markets.some(m => m.rows.some(row => !row.lineBreak));
+    if (!force && !needsLineBreak && ['done', 'partial'].includes(state?.status) && now() - Date.parse(state.completedAt) < CACHE_MS) return;
+    // Old checkpoints contain MA signals, but not closes to reconstruct line
+    // break. Recheck only missing rows on the first request for the new menu.
+    const previous = needsLineBreak ? { ...state, status: 'interrupted' } : state;
     state = { version: SCAN_VERSION, status: 'running', startedAt: isoNow(), updatedAt: isoNow(),
       persistenceError: previous?.persistenceError || '', markets: Object.keys(SCAN_MARKETS).map(key => ({
         key, phase: 'loading', total: 0, completed: 0, items: [], rows: [], error: '',
       })) };
-    runner = run(state, force ? null : previous).catch(error => {
+    runner = run(state, force ? null : previous, needsLineBreak).catch(error => {
       state.status = 'partial';
       state.error = error.message;
     }).finally(() => { runner = null; });
   }
-  async function snapshot(interval = 'day') {
+  async function snapshot(interval = 'day', indicator = 'ma200') {
     await restoreOnce();
     if (!state) return { status: 'idle', markets: [] };
-    const weeklyIncomplete = interval === 'week' && state.markets.some(m => m.weeklySourceError);
-    return { status: state.status === 'done' && weeklyIncomplete ? 'partial' : state.status, startedAt: state.startedAt, updatedAt: state.updatedAt,
+    const lineBreak = indicator === 'line-break';
+    const pending = lineBreak && state.markets.some(m => m.rows.some(row => !row.lineBreak));
+    const weeklyIncomplete = !lineBreak && interval === 'week' && state.markets.some(m => m.weeklySourceError);
+    return { indicator, status: pending && ['done', 'partial'].includes(state.status) ? 'interrupted'
+      : state.status === 'done' && weeklyIncomplete ? 'partial' : state.status, startedAt: state.startedAt, updatedAt: state.updatedAt,
       completedAt: state.completedAt, error: state.error, persistenceError: state.persistenceError,
       stale: now() - Date.parse(state.updatedAt) >= CACHE_MS,
       markets: state.markets.map(m => {
-        const checked = m.rows.map(row => ({ symbol: row.symbol, name: row.name, ...row[interval] }));
+        const sourceRows = lineBreak ? m.rows.filter(row => row.lineBreak) : m.rows;
+        const checked = sourceRows.map(row => ({ symbol: row.symbol, name: row.name, ...(lineBreak ? row.lineBreak[interval] : row[interval]) }));
         const excluded = checked.filter(row => row.status !== 'ready');
-        return { key: m.key, label: SCAN_MARKETS[m.key].label, phase: interval === 'week' && m.weeklySourceError ? 'error' : m.phase,
-          error: m.error || (interval === 'week' ? m.weeklySourceError : ''),
-          total: m.total, completed: m.completed, valid: checked.length - excluded.length,
+        return { key: m.key, label: SCAN_MARKETS[m.key].label, phase: !lineBreak && interval === 'week' && m.weeklySourceError ? 'error' : m.phase,
+          error: m.error || (!lineBreak && interval === 'week' ? m.weeklySourceError : ''),
+          total: m.total, completed: sourceRows.length, valid: checked.length - excluded.length,
           reference: m.reference, source: m.source, sourceDate: m.sourceDate,
           results: checked.filter(row => row.status === 'ready' && row.signal),
           excludedCount: excluded.length, excluded: excluded.slice(0, 100),

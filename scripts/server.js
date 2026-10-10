@@ -13,6 +13,7 @@ import { MAX_OHLCV_HISTORY } from '../src/utils/chartHistory.js';
 import stateHandler from '../api/state.js';
 import fundamentalsHandler from '../api/fundamentals.js';
 import ma200ScanHandler from '../api/ma200-scan.js';
+import lineBreakScanHandler from '../api/line-break-scan.js';
 
 dotenv.config({ path: '.env.local', quiet: true });
 dotenv.config({ quiet: true });
@@ -54,6 +55,7 @@ app.use(express.json({ limit: '25mb' }));
 app.all('/api/state', stateHandler);
 app.get('/api/fundamentals', fundamentalsHandler);
 app.all('/api/ma200-scan', ma200ScanHandler);
+app.all('/api/line-break-scan', lineBreakScanHandler);
 
 let krxCache = { loadedAt: 0, items: [] };
 const ohlcvCache = new Map();
