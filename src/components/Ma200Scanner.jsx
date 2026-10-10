@@ -3,6 +3,7 @@ import { apiUrl } from '../api';
 import { SCAN_MARKETS } from '../utils/ma200Scan';
 import StockChartDialog from './StockChartDialog';
 import { scanStockLabel } from '../utils/scanTable';
+import { downloadScanXlsx } from '../utils/scanExport';
 
 const formatPrice = value => Number.isFinite(value) ? value.toLocaleString('ko-KR', { maximumFractionDigits: 2 }) : '—';
 const excludedReason = (row, interval, lineBreak) => row.status === 'short-history'
@@ -24,6 +25,7 @@ export default function Ma200Scanner({ showBollinger = false, showLineBreak = fa
   const [search, setSearch] = useState('');
   const [record, setRecord] = useState(null);
   const [error, setError] = useState('');
+  const [exportError, setExportError] = useState('');
   const [refresh, setRefresh] = useState(0);
   const consumedRefresh = useRef(0);
   const [page, setPage] = useState(1);
@@ -75,6 +77,12 @@ export default function Ma200Scanner({ showBollinger = false, showLineBreak = fa
   const total = markets.reduce((sum, m) => sum + m.total, 0);
   const completed = markets.reduce((sum, m) => sum + m.completed, 0);
   const changeFilter = setter => event => { setter(event.target.value); setPage(1); };
+  const saveExcel = () => {
+    try {
+      downloadScanXlsx({ indicator, interval, direction, marketFilter, search, data, matches });
+      setExportError('');
+    } catch (failure) { setExportError(`엑셀 저장 실패: ${failure.message}`); }
+  };
 
   return <main className="ma200-scanner">
     <div className="scan-toolbar">
@@ -92,7 +100,10 @@ export default function Ma200Scanner({ showBollinger = false, showLineBreak = fa
       </select>
       <input aria-label="검색 결과 종목명 또는 코드" placeholder="종목명 / 코드" value={search} onChange={changeFilter(setSearch)} />
       <button type="button" onClick={() => setRefresh(value => value + 1)} disabled={running}>새로 검색</button>
+      <button type="button" onClick={saveExcel} disabled={!data} title="현재 필터의 모든 페이지 결과를 이 기기에 다운로드합니다. 서버에 엑셀 파일을 저장하지 않습니다.">엑셀 저장</button>
     </div>
+    <p className="scan-description">엑셀 저장: 현재 필터의 모든 페이지 결과와 검색 요약을 접속한 기기에 다운로드합니다. 서버에는 엑셀 파일을 저장하지 않습니다. 검색 중에는 현재까지의 결과를 저장합니다.</p>
+    {exportError && <p role="alert" className="scan-error">{exportError}</p>}
     <p className="scan-description">
       {lineBreak ? `${interval === 'day' ? '일봉 종가' : '주봉 마지막 종가'}로 삼선전환도를 만들고, ${interval === 'day' ? '최근 거래일' : '최근 주봉'}에서 새로 양전환·음전환한 종목을 찾습니다.`
         : interval === 'day' ? '최근 두 실제 거래일의 종가와 각 날짜의 200일 단순이평을 비교합니다.'
