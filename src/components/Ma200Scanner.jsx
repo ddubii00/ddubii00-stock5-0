@@ -3,7 +3,7 @@ import { apiUrl } from '../api';
 import { SCAN_MARKETS } from '../utils/ma200Scan';
 import StockChartDialog from './StockChartDialog';
 import { scanStockLabel } from '../utils/scanTable';
-import { downloadScanXlsx } from '../utils/scanExport';
+import { downloadScanXlsx, readScanExportColors } from '../utils/scanExport';
 
 const formatPrice = value => Number.isFinite(value) ? value.toLocaleString('ko-KR', { maximumFractionDigits: 2 }) : '—';
 const excludedReason = (row, interval, lineBreak) => row.status === 'short-history'
@@ -28,6 +28,7 @@ export default function Ma200Scanner({ showBollinger = false, showLineBreak = fa
   const [exportError, setExportError] = useState('');
   const [refresh, setRefresh] = useState(0);
   const consumedRefresh = useRef(0);
+  const tableRef = useRef(null);
   const [page, setPage] = useState(1);
   const [selectedStock, setSelectedStock] = useState(null);
   const closeChart = useCallback(() => setSelectedStock(null), []);
@@ -79,7 +80,7 @@ export default function Ma200Scanner({ showBollinger = false, showLineBreak = fa
   const changeFilter = setter => event => { setter(event.target.value); setPage(1); };
   const saveExcel = () => {
     try {
-      downloadScanXlsx({ indicator, interval, direction, marketFilter, search, data, matches });
+      downloadScanXlsx({ indicator, interval, direction, marketFilter, search, data, matches, colors: readScanExportColors(tableRef.current) });
       setExportError('');
     } catch (failure) { setExportError(`엑셀 저장 실패: ${failure.message}`); }
   };
@@ -147,7 +148,7 @@ export default function Ma200Scanner({ showBollinger = false, showLineBreak = fa
     <div className="scan-result-caption">조건에 맞는 종목 {matches.length}개
       {pages > 1 && <span><button type="button" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>이전</button> {currentPage}/{pages} <button type="button" disabled={currentPage === pages} onClick={() => setPage(currentPage + 1)}>다음</button></span>}
     </div>
-    <div className="scan-table-wrap" role="region" aria-label={lineBreak ? '삼선전환도 검색 결과 표' : '200이평 검색 결과 표'} tabIndex={0}><table className="scan-table">
+    <div className="scan-table-wrap" role="region" aria-label={lineBreak ? '삼선전환도 검색 결과 표' : '200이평 검색 결과 표'} tabIndex={0}><table ref={tableRef} className="scan-table">
       <colgroup><col className="scan-stock-col" /><col className="scan-market-col" /><col className="scan-signal-col" /><col className="scan-date-col" /><col span={5} /></colgroup>
       <thead><tr><th scope="col" className="scan-stock-cell">종목</th><th scope="col">시장 / 통화</th><th scope="col">구분</th><th scope="col">비교일 (이전 → 최근)</th>
         {lineBreak ? <><th scope="col">이전 종가</th><th scope="col">최근 종가</th><th scope="col">이전 방향</th><th scope="col">전환 기준가</th><th scope="col">기준가 대비</th></>

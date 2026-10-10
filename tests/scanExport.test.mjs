@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { unzipSync, strFromU8 } from 'fflate';
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
-import { createScanExport, buildScanXlsx, downloadScanXlsx, SCAN_XLSX_MIME } from '../src/utils/scanExport.js';
+import { createScanExport, buildScanXlsx, downloadScanXlsx, readScanExportColors, SCAN_XLSX_MIME } from '../src/utils/scanExport.js';
 
 const row = { name: '삼성전자 전체 이름이 아주 길어도 잘리지 않습니다', symbol: '005930', market: 'kospi', marketLabel: 'KOSPI 전체', signal: 'breakout',
   previous: { date: '2026-10-07', close: 70000, ma200: 70001, direction: 'down' },
@@ -15,7 +16,8 @@ const read = model => {
   const files = unzipSync(buildScanXlsx(model));
   for (const [name, bytes] of Object.entries(files)) assert.equal(XMLValidator.validate(strFromU8(bytes)), true, name);
   const parser = new XMLParser({ ignoreAttributes: false, parseTagValue: false });
-  return { files, sheet: name => parser.parse(strFromU8(files[`xl/worksheets/sheet${name}.xml`])).worksheet };
+  return { files, styles: parser.parse(strFromU8(files['xl/styles.xml'])).styleSheet,
+    sheet: name => parser.parse(strFromU8(files[`xl/worksheets/sheet${name}.xml`])).worksheet };
 };
 
 test('MA200 export has full names, literal codes, precise prices, typed dates and percent fractions', () => {
@@ -30,7 +32,7 @@ test('MA200 export has full names, literal codes, precise prices, typed dates an
   assert.equal(cells[1]['@_t'], 'inlineStr');
   assert.equal(cells[1].is.t['#text'], '005930');
   assert.equal(cells[10].v, '70123.4567');
-  assert.equal(cells[11]['@_s'], '4');
+  assert.equal(cells[11]['@_s'], '9');
   assert.equal(sheet(2).sheetViews.sheetView.pane['@_topLeftCell'], 'C2');
 });
 
@@ -105,4 +107,57 @@ test('download only creates a local Blob/anchor with no fetch or filesystem writ
 test('no record or invalid saving time fails before downloading', () => {
   assert.throws(() => createScanExport({ matches: [] }), /자료/);
   assert.throws(() => createScanExport({ ...options, savedAt: 'invalid' }), /시각/);
+});
+
+test('both scanners/day/week preserve screen text colors by signal, not the sign of a number', () => {
+  const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
+  for (const indicator of ['ma200', 'line-break']) for (const interval of ['day', 'week']) {
+    const up = indicator === 'ma200' ? 'breakout' : 'bullish';
+    const down = indicator === 'ma200' ? 'breakdown' : 'bearish';
+    const model = createScanExport({ ...options, indicator, interval, matches: [
+      { ...row, signal: up, distancePct: 0 }, { ...row, signal: down, distancePct: 0 },
+      { ...row, signal: up, distancePct: -1 }, { ...row, signal: down, distancePct: 1 },
+    ] });
+    const { sheet, styles } = read(model);
+    const color = cell => styles.fonts.font[Number(styles.cellXfs.xf[Number(cell['@_s'])]['@_fontId'])].color['@_rgb'];
+    const cells = sheet(2).sheetData.row;
+    assert.equal(color(cells[0].c[0]), 'FF1A202C');
+    assert.equal(styles.fills.fill[3].patternFill.fgColor['@_rgb'], 'FFF8F9FB');
+    for (let i = 1; i < cells.length; i++) {
+      assert.equal(color(cells[i].c[0]), 'FF1A73E8');
+      assert.equal(color(cells[i].c[1]), 'FF6B7280');
+      assert.equal(color(cells[i].c[3]), 'FF6B7280');
+      assert.equal(color(cells[i].c[7]), 'FF1A202C');
+      const expected = i % 2 === 1 ? 'FFDC2626' : 'FF1565C0';
+      assert.equal(color(cells[i].c[4]), expected);
+      assert.equal(color(cells[i].c[11]), expected);
+      assert.equal(styles.cellXfs.xf[Number(cells[i].c[11]['@_s'])]['@_numFmtId'], '10');
+      assert.equal(styles.cellXfs.xf[Number(cells[i].c[5]['@_s'])]['@_numFmtId'], '165');
+    }
+    for (const [name, hex] of Object.entries({ text: '1A202C', accent: '1A73E8', muted: '6B7280', 'scan-up': 'DC2626', 'scan-down': '1565C0' })) {
+      assert.match(css, new RegExp(`--${name}:\\s*#${hex}`, 'i'));
+    }
+  }
+});
+
+test('all exported pages retain signal colors and unknown signals stay neutral', () => {
+  const { sheet } = read(createScanExport({ ...options, matches: Array.from({length: 112}, (_, i) => ({...row,signal: i % 2 ? 'breakdown' : 'breakout'})) }));
+  assert.equal(sheet(2).sheetData.row[112].c[11]['@_s'], '10');
+  const unknown = read(createScanExport({...options,matches:[{...row,signal:'unknown'}]})).sheet(2).sheetData.row[1].c;
+  assert.equal(unknown[4]['@_s'], '12');
+  assert.equal(unknown[11]['@_s'], '4');
+});
+
+test('live table palette accepts CSS hex and RGB colors and rejects unsafe values', () => {
+  const original = globalThis.getComputedStyle;
+  const header = {};
+  const table = { querySelector: () => header };
+  try {
+    globalThis.getComputedStyle = element => element === header ? { color:'rgb(10, 20, 30)',backgroundColor:'rgb(248, 249, 251)' }
+      : { color:'rgb(26, 32, 44)',getPropertyValue: name => ({'--accent':' #abc ', '--muted':'#6b7280', '--scan-up':'rgb(220, 38, 38)', '--scan-down':'rgb(21, 101, 192)'})[name] };
+    const model = createScanExport({...options,colors:readScanExportColors(table)});
+    assert.deepEqual(model.colors, {text:'1A202C',accent:'AABBCC',muted:'6B7280',up:'DC2626',down:'1565C0',headerText:'0A141E',headerFill:'F8F9FB'});
+    assert.deepEqual(readScanExportColors(null), {});
+    assert.equal(createScanExport({...options,colors:{up:'bad"/><xml>',down:'rgb(300, 0, 0)'}}).colors.up,'DC2626');
+  } finally { globalThis.getComputedStyle = original; }
 });

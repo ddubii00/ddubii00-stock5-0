@@ -10,6 +10,8 @@
   --accent:      #1a73e8;
   --text:        #1a202c;
   --muted:       #6b7280;
+  --scan-up:     #dc2626;
+  --scan-down:   #1565c0;
   --up:          #ef5350;   /* Korean convention: red = up */
   --dn:          #1565c0;   /* blue = down */
   --radius:      8px;
@@ -721,8 +723,8 @@ html, body {
 .scan-stock-cell small { max-width: 15em; overflow: hidden; text-overflow: ellipsis; }
 .scan-table th:nth-child(-n+4), .scan-table td:nth-child(-n+4) { text-align: left; }
 .scan-table small { display: block; color: var(--muted); font-size: 10px; }
-.scan-up { color: #dc2626; font-weight: 600; }
-.scan-down { color: #1565c0; font-weight: 600; }
+.scan-up { color: var(--scan-up); font-weight: 600; }
+.scan-down { color: var(--scan-down); font-weight: 600; }
 .scan-empty { padding: 16px; text-align: center; color: var(--muted); }
 @media (max-width: 850px) { .scan-market-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 480px) { .scan-market-grid { grid-template-columns: minmax(0, 1fr); } }

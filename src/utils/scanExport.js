@@ -2,6 +2,27 @@ import { zipSync, strToU8 } from 'fflate';
 import { SCAN_MARKETS } from './ma200Scan.js';
 
 export const SCAN_XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const defaultColors = { text: '1A202C', accent: '1A73E8', muted: '6B7280', up: 'DC2626', down: '1565C0', headerText: '1A202C', headerFill: 'F8F9FB' };
+// Read the live table theme, including empty/filtered results, without adding DOM
+// elements or triggering requests. Shared variables also drive its signal classes.
+export function readScanExportColors(table) {
+  if (!table) return {};
+  const style = getComputedStyle(table);
+  const header = table.querySelector('th');
+  const headerStyle = header && getComputedStyle(header);
+  return { text: style.color, accent: style.getPropertyValue('--accent'), muted: style.getPropertyValue('--muted'),
+    up: style.getPropertyValue('--scan-up'), down: style.getPropertyValue('--scan-down'),
+    headerText: headerStyle?.color, headerFill: headerStyle?.backgroundColor };
+}
+function excelColor(value, fallback) {
+  const text = String(value || '').trim();
+  const hex = text.replace(/^#/, '');
+  if (/^[\da-f]{6}$/i.test(hex)) return hex.toUpperCase();
+  if (/^[\da-f]{3}$/i.test(hex)) return [...hex].map(c => c + c).join('').toUpperCase();
+  const rgb = text.match(/^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
+  return rgb && rgb.slice(1).every(c => Number(c) <= 255)
+    ? rgb.slice(1).map(c => Number(c).toString(16).padStart(2, '0')).join('').toUpperCase() : fallback;
+}
 const signals = { breakout: '돌파', breakdown: '붕괴', bullish: '양전환', bearish: '음전환' };
 const statuses = { done: '완료', partial: '일부미완료', running: '진행중', interrupted: '중단-보완중', idle: '준비중' };
 const phases = { loading: '목록 준비 중', scanning: '검색 중', done: '완료', error: '오류/미완료' };
@@ -34,7 +55,7 @@ const colName = index => {
 };
 
 // Use the same filtered matches as the UI, before pagination. No re-fetch or recalculation.
-export function createScanExport({ indicator = 'ma200', interval = 'day', direction = 'all', marketFilter = 'all', search = '', data, matches, savedAt = new Date() }) {
+export function createScanExport({ indicator = 'ma200', interval = 'day', direction = 'all', marketFilter = 'all', search = '', data, matches, colors = {}, savedAt = new Date() }) {
   if (!data || !Array.isArray(data.markets) || !Array.isArray(matches)) throw new Error('검색 자료를 받은 뒤 저장하세요.');
   const lineBreak = indicator === 'line-break';
   const title = lineBreak ? '7. 삼선전환도 양전환/음전환' : '6. 200이평 돌파/붕괴';
@@ -78,19 +99,29 @@ export function createScanExport({ indicator = 'ma200', interval = 'day', direct
       : [num(row.previous?.ma200), num(row.latest?.close), num(row.latest?.ma200), percentCell(row.distancePct)])])];
   const query = search.trim() ? `_검색-${safeName(Array.from(search.trim()).slice(0, 8).join(''))}` : '';
   const filename = safeName(`stock5-0_${lineBreak ? '7_삼선' : '6_200이평'}_${timeframe}_${marketFilter === 'all' ? '전체' : marketFilter}_${directionLabel}${query}_기준${dateRange.replace(/-/g, '')}_${status}${data.stale ? '-이전자료' : ''}_${savedTime.replace(/[-: ]/g, '').replace('KST', '')}KST.xlsx`);
-  return { filename, title, summary, results };
+  return { filename, title, summary, results, resultSignals: matches.map(row => row.signal),
+    colors: Object.fromEntries(Object.entries(defaultColors).map(([key, fallback]) => [key, excelColor(colors[key], fallback)])) };
 }
 
 const ns = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const declaration = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
-function worksheet(rows, widths, summary = false) {
+function worksheet(rows, widths, summary = false, resultSignals = []) {
   const lastCol = colName(widths.length - 1);
   const cells = rows.map((row, i) => `<row r="${i + 1}" ht="${summary ? i === 20 ? 48 : i >= 15 && i <= 17 ? 48 : 30 : 42}" customHeight="1">${row.map((raw, j) => {
     if (raw === null || raw === undefined) return '';
     const styled = typeof raw === 'object';
     const value = styled ? raw.value : raw;
     const header = summary ? i === 0 || i === 20 : i === 0;
-    const style = header ? 1 : styled ? raw.style : typeof value === 'number' ? (summary ? 0 : 2) : 0;
+    let style = header ? summary ? 1 : 11 : styled ? raw.style : typeof value === 'number' ? (summary ? 0 : 2) : summary ? 0 : 12;
+    if (!summary && !header) {
+      if (j === 0) style = 5; // Stock name link.
+      if (j === 1 || j === 3) style = 6; // Muted symbol and currency.
+      const signal = resultSignals[i - 1];
+      const up = ['breakout', 'bullish'].includes(signal);
+      const down = ['breakdown', 'bearish'].includes(signal);
+      if ((up || down) && j === 4) style = up ? 7 : 8;
+      if ((up || down) && j === 11) style = up ? 9 : 10;
+    }
     const address = `${colName(j)}${i + 1}`;
     return typeof value === 'number' ? `<c r="${address}" s="${style}"><v>${value}</v></c>`
       : `<c r="${address}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${xml(value)}</t></is></c>`;
@@ -107,6 +138,13 @@ function worksheet(rows, widths, summary = false) {
 // preserve leading zeros and keep text starting with '=' literal, not formulas.
 export function buildScanXlsx(model) {
   const summary = model.summary.map((row, i) => i < 19 ? [row[0], null, null, row[1]] : row);
+  const colors = model.colors || defaultColors;
+  const fonts = [{}, { color: 'FFFFFF', bold: true }, { color: colors.text }, { color: colors.accent, bold: true },
+    { color: colors.muted }, { color: colors.up, bold: true }, { color: colors.down, bold: true }, { color: colors.headerText, bold: true }];
+  // Keep existing number/date styles 0–4; append only the screen's text styles.
+  const styles = [{}, { font: 1, fill: 2, center: true }, { format: 164, font: 2 }, { format: 165, font: 2 }, { format: 10, font: 2 },
+    { font: 3 }, { font: 4 }, { font: 5 }, { font: 6 }, { format: 10, font: 5 }, { format: 10, font: 6 },
+    { font: 7, fill: 3, center: true }, { font: 2 }];
   const files = {
     '[Content_Types].xml': `${declaration}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`,
     '_rels/.rels': `${declaration}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
@@ -114,13 +152,13 @@ export function buildScanXlsx(model) {
     'xl/_rels/workbook.xml.rels': `${declaration}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`,
     'xl/styles.xml': `${declaration}<styleSheet xmlns="${ns}">
       <numFmts count="2"><numFmt numFmtId="164" formatCode="#,##0.00"/><numFmt numFmtId="165" formatCode="yyyy-mm-dd"/></numFmts>
-      <fonts count="2"><font><sz val="11"/><name val="Arial"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Arial"/></font></fonts>
-      <fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill></fills>
+      <fonts count="${fonts.length}">${fonts.map(font => `<font>${font.bold ? '<b/>' : ''}<sz val="11"/>${font.color ? `<color rgb="FF${font.color}"/>` : ''}<name val="Arial"/></font>`).join('')}</fonts>
+      <fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FF${colors.headerFill}"/><bgColor indexed="64"/></patternFill></fill></fills>
       <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-      <cellXfs count="5">${[0, 0, 164, 165, 10].map((format, i) => `<xf numFmtId="${format}" fontId="${i === 1 ? 1 : 0}" fillId="${i === 1 ? 2 : 0}" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment vertical="center"${i === 1 ? ' horizontal="center"' : ''}${i < 2 ? ' wrapText="1"' : ''}/></xf>`).join('')}</cellXfs>
+      <cellXfs count="${styles.length}">${styles.map(style => `<xf numFmtId="${style.format || 0}" fontId="${style.font || 0}" fillId="${style.fill || 0}" borderId="0" xfId="0" applyFont="1" applyFill="1" applyNumberFormat="1" applyAlignment="1"><alignment vertical="center"${style.center ? ' horizontal="center"' : ''}${!style.format ? ' wrapText="1"' : ''}/></xf>`).join('')}</cellXfs>
       <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`,
     'xl/worksheets/sheet1.xml': worksheet(summary, [18, 16, 16, 16, 16, 16, 18, 18, 18, 20, 20, 20, 20, 38, 22, 38], true),
-    'xl/worksheets/sheet2.xml': worksheet(model.results, [38, 20, 24, 10, 14, 18, 18, 20, 20, 20, 20, 18]),
+    'xl/worksheets/sheet2.xml': worksheet(model.results, [38, 20, 24, 10, 14, 18, 18, 20, 20, 20, 20, 18], false, model.resultSignals),
   };
   return zipSync(Object.fromEntries(Object.entries(files).map(([name, content]) => [name, strToU8(content)])), { level: 6 });
 }
