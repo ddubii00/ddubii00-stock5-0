@@ -52,13 +52,13 @@
     let payload;
     if (url.pathname.endsWith('/quote')) {
       payload = { price: 160, change: 1, changePct: .63 };
-    } else if (url.pathname.endsWith('/fundamentals')) {
-      payload = { symbol: url.searchParams.get('symbol'), source: 'synthetic-test', currency: 'KRW',
-        marketCapCurrency: 'KRW', pe: 12.3, forwardPe: 9.2, roe: .18, forwardRoe: .21,
-        pbr: 1.4, peg: .8, marketCap: 400e12, revenue: 300e12, operatingIncome: 40e12,
-        period: '202512', forwardPeriod: '202612' };
     } else if (url.pathname.endsWith('/search') && url.searchParams.get('q') === 'rank-alternate') {
       payload = [{ symbol: 'ALTERNATE', name: '순위 밖 검증 종목' }];
+    } else if (url.pathname.endsWith('/fundamentals')) {
+      payload = { symbol: url.searchParams.get('symbol').toUpperCase(), pe: 7.52, forwardPe: 4.74,
+        roe: .4415, forwardRoe: 1.0318, pbr: 4.57, peg: .01, pegEstimated: true,
+        marketCap: 1232e12, revenue: 97.1e12, operatingIncome: 47.2e12,
+        currency: 'KRW', source: 'synthetic-test-only', periodType: '연간', period: '2025' };
     } else if (url.pathname.endsWith('/top100')) {
       rankingStats.requests += 1;
       reportRanking();

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ChartColumn from './components/ChartColumn';
 import SharedPositionAccess from './components/SharedPositionAccess';
 import Ma200Scanner from './components/Ma200Scanner';
+import SavedStocks from './components/SavedStocks';
 import { startSharedPositions, useSharedPositionConnection } from './state/sharedPositions';
 import { apiUrl } from './api';
 import { GROUPS, INDEX_ITEMS } from './marketPresets';
@@ -414,6 +415,7 @@ function App() {
             <option value="nikkei50">5. 니케이 Top 50</option>
             <option value="ma200">6. 200이평 돌파/붕괴</option>
             <option value="line-break">7. 삼선전환도</option>
+            <option value="saved-stocks">8. 종목들</option>
           </select>
         </div>
 
@@ -440,7 +442,7 @@ function App() {
         </button>
       </header>
 
-      {['ma200', 'line-break'].includes(view) ? <Ma200Scanner key={view} indicator={view} showBollinger={showBollinger} globalWeekly={globalWeekly} /> : <div className="dashboard-grid">
+      {view === 'saved-stocks' ? <SavedStocks showBollinger={showBollinger} globalWeekly={globalWeekly} /> : ['ma200', 'line-break'].includes(view) ? <Ma200Scanner key={view} indicator={view} showBollinger={showBollinger} globalWeekly={globalWeekly} /> : <div className="dashboard-grid">
         {rankedView && rankedLoading[view] && selectedItems.length === 0 && (
           <div className="top100-status" role="status">전일 시가총액 순위 불러오는 중...</div>
         )}

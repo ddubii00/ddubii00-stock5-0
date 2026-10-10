@@ -5,7 +5,7 @@ const BUTTONS = [
   ['short-watch', '숏 관심'], ['short-hold', '숏 보유'],
 ];
 
-export default function PositionButtons({ symbol, name }) {
+export default function PositionButtons({ symbol, name, flagsOnly = false }) {
   const state = useSharedPositions();
   const key = String(symbol || '').trim().toUpperCase();
   const position = state.positions[key];
@@ -22,7 +22,7 @@ export default function PositionButtons({ symbol, name }) {
   };
   return <div className="position-controls-wrapper">
     <div className="position-mini-controls" aria-label={`${name || symbol} 종목 기록`} aria-busy={saving}>
-      {BUTTONS.map(([status, label]) => <button key={status} type="button"
+      {!flagsOnly && BUTTONS.map(([status, label]) => <button key={status} type="button"
         className={`position-mini-btn ${status}${position?.status === status ? ' active' : ''}`}
         aria-pressed={position?.status === status} aria-disabled={saving}
         onClick={() => toggle(status)}>{label}</button>)}

@@ -2,10 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiUrl } from '../api';
 import { SCAN_MARKETS } from '../utils/ma200Scan';
 import StockChartDialog from './StockChartDialog';
-import { scanStockLabel } from '../utils/scanTable';
+import ScanResultRow from './ScanResultRow';
 import { downloadScanXlsx, readScanExportColors } from '../utils/scanExport';
 
-const formatPrice = value => Number.isFinite(value) ? value.toLocaleString('ko-KR', { maximumFractionDigits: 2 }) : '—';
 const excludedReason = (row, interval, lineBreak) => row.status === 'short-history'
   ? lineBreak ? `전환선 부족 (${row.availableLines || 0}/3선 · ${row.available}개 ${interval === 'week' ? '주봉' : '일봉'})`
     : `${interval === 'week' ? '주봉' : '일봉'} 자료 부족 (${row.available}/201)${row.supplemented ? ' · 주봉 추가 조회 후에도 부족' : ''}`
@@ -149,20 +148,12 @@ export default function Ma200Scanner({ showBollinger = false, globalWeekly = fal
       {pages > 1 && <span><button type="button" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>이전</button> {currentPage}/{pages} <button type="button" disabled={currentPage === pages} onClick={() => setPage(currentPage + 1)}>다음</button></span>}
     </div>
     <div className="scan-table-wrap" role="region" aria-label={lineBreak ? '삼선전환도 검색 결과 표' : '200이평 검색 결과 표'} tabIndex={0}><table ref={tableRef} className="scan-table">
-      <colgroup><col className="scan-stock-col" /><col className="scan-market-col" /><col className="scan-signal-col" /><col className="scan-date-col" /><col span={5} /></colgroup>
+      <colgroup><col className="scan-stock-col" /><col className="scan-market-col" /><col className="scan-signal-col" /><col className="scan-date-col" /><col span={5} className="scan-price-col" /><col className="saved-record-col" /><col className="stock-financial-col" /></colgroup>
       <thead><tr><th scope="col" className="scan-stock-cell">종목</th><th scope="col">시장 / 통화</th><th scope="col">구분</th><th scope="col">비교일 (이전 → 최근)</th>
         {lineBreak ? <><th scope="col">이전 종가</th><th scope="col">최근 종가</th><th scope="col">이전 방향</th><th scope="col">전환 기준가</th><th scope="col">기준가 대비</th></>
-          : <><th scope="col">이전 종가</th><th scope="col">이전 200이평</th><th scope="col">최근 종가</th><th scope="col">최근 200이평</th><th scope="col">최근 괴리율</th></>}</tr></thead>
-      <tbody>{visible.map(row => <tr key={`${row.market}-${row.symbol}`}>
-        <td className="scan-stock-cell"><button type="button" className="scan-stock-link" aria-haspopup="dialog" title={row.name} aria-label={`${row.name} 차트 보기`}
-          onClick={() => setSelectedStock({ symbol: row.symbol, name: row.name, weekly: interval === 'week' })}>{scanStockLabel(row.name)}</button>
-          <small title={row.symbol}>{row.symbol}</small></td><td>{row.marketLabel}<small>{SCAN_MARKETS[row.market].currency}</small></td>
-        <td className={row.signal === upSignal ? 'scan-up' : 'scan-down'}>{row.signal === upSignal ? upLabel : downLabel}</td>
-        <td>{row.previous.date} → {row.latest.date}</td><td>{formatPrice(row.previous.close)}</td>
-        {lineBreak ? <><td>{formatPrice(row.latest.close)}</td><td>{row.previous.direction === 'up' ? '양선' : '음선'}</td><td>{formatPrice(row.reversalPrice)}</td></>
-          : <><td>{formatPrice(row.previous.ma200)}</td><td>{formatPrice(row.latest.close)}</td><td>{formatPrice(row.latest.ma200)}</td></>}
-        <td className={row.signal === upSignal ? 'scan-up' : 'scan-down'}>{row.distancePct > 0 ? '+' : ''}{row.distancePct.toFixed(2)}%</td>
-      </tr>)}</tbody>
+          : <><th scope="col">이전 종가</th><th scope="col">이전 200이평</th><th scope="col">최근 종가</th><th scope="col">최근 200이평</th><th scope="col">최근 괴리율</th></>}<th scope="col">준비! / 주의!</th><th scope="col">재무정보</th></tr></thead>
+      <tbody>{visible.map(row => <ScanResultRow key={`${row.market}-${row.symbol}`} row={row} lineBreak={lineBreak}
+        upSignal={upSignal} upLabel={upLabel} downLabel={downLabel} interval={interval} onOpen={setSelectedStock} />)}</tbody>
     </table></div>
     {matches.length === 0 && <p className="scan-empty">{!data || running ? '검색이 진행되면 조건에 맞는 종목을 이곳에 표시합니다.'
       : data.status !== 'done' ? '현재 발견된 결과가 없습니다. 미완료 시장과 조회 오류를 확인하세요.' : '계산 가능한 종목 중 선택한 조건에 맞는 종목이 없습니다.'}</p>}

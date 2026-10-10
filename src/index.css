@@ -677,6 +677,22 @@ html, body {
 .fundamentals-metric { display: inline-flex; flex: 0 0 auto; gap: 2px; white-space: nowrap; }
 .fundamentals-metric b { color: var(--text); font-weight: 600; }
 
+.scan-price-col { width: 105px; }
+.saved-record-col { width: 100px; }
+.stock-financial-col { width: 820px; }
+.scan-table:has(.stock-financial-col) { min-width: 2000px; width: max(100%, 2000px); }
+.scan-table.saved-stock-table { min-width: 1140px; width: 100%; }
+.saved-stock-table .stock-financial-col { width: auto; }
+.stock-financial-cell .fundamentals-row { border: 0; background: transparent; padding: 0; overflow: visible; font-size: 11px; }
+.scan-table .fundamentals-metric > span { display: inline; font-size: inherit; color: var(--muted); }
+.saved-record-cell .position-mini-controls { justify-content: flex-start; }
+.saved-stock-group { margin-top: 18px; }
+.saved-stock-group h2 { font-size: 15px; margin: 0 0 8px; }
+.saved-group-title.long-hold { color: var(--scan-up); }
+.saved-group-title.long-watch { color: rgb(220 38 38 / 65%); }
+.saved-group-title.short-watch { color: rgb(21 101 192 / 65%); }
+.saved-group-title.short-hold { color: var(--scan-down); }
+
 .ma200-scanner { padding: 14px; min-width: 0; }
 .scan-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .scan-toolbar h1 { font-size: 17px; margin-right: 8px; }
