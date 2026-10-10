@@ -11,7 +11,7 @@ const excludedReason = (row, interval, lineBreak) => row.status === 'short-histo
     : `${interval === 'week' ? '주봉' : '일봉'} 자료 부족 (${row.available}/201)${row.supplemented ? ' · 주봉 추가 조회 후에도 부족' : ''}`
   : row.status === 'stale' ? `최근 거래일 불일치 (${row.latestDate || '자료 없음'})` : row.error || '조회 실패';
 
-export default function Ma200Scanner({ showBollinger = false, showLineBreak = false, globalWeekly = false, indicator = 'ma200' }) {
+export default function Ma200Scanner({ showBollinger = false, globalWeekly = false, indicator = 'ma200' }) {
   const lineBreak = indicator === 'line-break';
   const title = lineBreak ? '삼선전환도 양전환/음전환' : '200이평 돌파/붕괴';
   const endpoint = lineBreak ? 'line-break-scan' : 'ma200-scan';
@@ -167,6 +167,6 @@ export default function Ma200Scanner({ showBollinger = false, showLineBreak = fa
     {matches.length === 0 && <p className="scan-empty">{!data || running ? '검색이 진행되면 조건에 맞는 종목을 이곳에 표시합니다.'
       : data.status !== 'done' ? '현재 발견된 결과가 없습니다. 미완료 시장과 조회 오류를 확인하세요.' : '계산 가능한 종목 중 선택한 조건에 맞는 종목이 없습니다.'}</p>}
     {selectedStock && <StockChartDialog key={selectedStock.symbol} stock={selectedStock}
-      showBollinger={showBollinger} showLineBreak={showLineBreak} globalWeekly={globalWeekly} onClose={closeChart} />}
+      showBollinger={showBollinger} globalWeekly={globalWeekly} onClose={closeChart} />}
   </main>;
 }

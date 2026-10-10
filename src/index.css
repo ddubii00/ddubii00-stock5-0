@@ -698,6 +698,8 @@ html, body {
 .scan-chart-dialog::backdrop { background: rgba(15, 23, 42, .45); }
 .scan-chart-dialog-header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--panel2); }
 .scan-chart-dialog-header h2 { min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
+.scan-chart-dialog-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.scan-chart-dialog-actions .header-bb-button { min-height: 34px; }
 .scan-chart-dialog-close { flex: 0 0 auto; width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: var(--text); font: inherit; font-weight: 700; cursor: pointer; }
 .scan-chart-dialog-close:hover { background: var(--bg); }
 .scan-chart-dialog-body { min-height: 0; padding: 8px; overflow-y: scroll; scrollbar-gutter: stable; overscroll-behavior: contain; }

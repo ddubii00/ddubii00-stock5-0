@@ -440,7 +440,7 @@ function App() {
         </button>
       </header>
 
-      {['ma200', 'line-break'].includes(view) ? <Ma200Scanner key={view} indicator={view} showBollinger={showBollinger} showLineBreak={showLineBreak} globalWeekly={globalWeekly} /> : <div className="dashboard-grid">
+      {['ma200', 'line-break'].includes(view) ? <Ma200Scanner key={view} indicator={view} showBollinger={showBollinger} globalWeekly={globalWeekly} /> : <div className="dashboard-grid">
         {rankedView && rankedLoading[view] && selectedItems.length === 0 && (
           <div className="top100-status" role="status">전일 시가총액 순위 불러오는 중...</div>
         )}
