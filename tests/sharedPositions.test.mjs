@@ -36,6 +36,7 @@ test('old records keep their status and average price, caution defaults off', as
   await saveState({ positions: { '005930': { name: '삼성전자', status: 'long-hold', averagePrice: 70000 } } });
   const initial = (await loadState()).positions['005930'];
   assert.equal(initial.caution, false);
+  assert.equal(initial.ready, false);
   const { position } = await updatePosition('005930', { caution: true });
   assert.equal(position.status, 'long-hold');
   assert.equal(position.averagePrice, 70000);
@@ -64,10 +65,12 @@ test('concurrent field updates merge without erasing another device record', asy
     updatePosition('AAPL', { status: 'long-watch' }),
     updatePosition('MSFT', { status: 'short-watch' }),
     updatePosition('AAPL', { caution: true }),
+    updatePosition('AAPL', { ready: true }),
   ]);
   const { positions } = await loadState();
   assert.equal(positions.AAPL.status, 'long-watch');
   assert.equal(positions.AAPL.caution, true);
+  assert.equal(positions.AAPL.ready, true);
   assert.equal(positions.MSFT.status, 'short-watch');
   assert.equal(positions['005930'].averagePrice, 70000);
 });
@@ -79,6 +82,7 @@ test('records survive a fresh server process', () => {
   assert.equal(child.status, 0, child.stderr);
   const { positions } = JSON.parse(child.stdout);
   assert.equal(positions.AAPL.caution, true);
+  assert.equal(positions.AAPL.ready, true);
   assert.equal(positions.MSFT.status, 'short-watch');
 });
 
@@ -89,9 +93,60 @@ test('API requires existing password for reading and writing; validates PATCH', 
   assert.equal(get.headers['Cache-Control'], 'no-store');
   assert.equal(get.body.positions.AAPL.caution, true);
   assert.equal((await request('PATCH', { symbol: 'AAPL', changes: { caution: 'true' } })).status, 400);
+  for (const ready of ['true', 1, null]) {
+    assert.equal((await request('PATCH', { symbol: 'AAPL', changes: { ready } })).status, 400);
+  }
+  assert.equal((await request('PATCH', { symbol: 'AAPL', changes: { ready: false } }, 'wrong')).status, 401);
   assert.equal((await request('PATCH', { symbol: '../file', changes: { caution: true } })).status, 400);
   assert.equal((await request('PATCH', { symbol: 'AAPL', changes: { status: 'unknown' } })).status, 400);
   assert.equal((await request('PATCH', { symbol: 'AAPL', changes: { caution: false } })).body.position.status, 'long-watch');
+  assert.equal((await request('PATCH', { symbol: 'AAPL', changes: { ready: false } })).body.position.status, 'long-watch');
+});
+
+test('ready-only records persist and toggling off deletes only empty records', async () => {
+  const { position } = await updatePosition('READY1', { name: '준비 단독 검증', ready: true });
+  assert.equal(position.ready, true);
+  assert.equal(position.caution, false);
+  assert.equal(position.status, '');
+  assert.equal((await loadState()).positions.READY1.ready, true);
+  assert.equal((await updatePosition('READY1', { ready: false })).position, null);
+  assert.equal((await loadState()).positions.READY1, undefined);
+});
+
+test('ready toggles independently of all statuses, caution and average price', async () => {
+  for (const status of ['long-hold', 'long-watch', 'short-watch', 'short-hold']) {
+    await updatePosition('READY2', { status, caution: true, averagePrice: 120, ready: true });
+    const off = (await updatePosition('READY2', { ready: false })).position;
+    assert.equal(off.status, status);
+    assert.equal(off.caution, true);
+    assert.equal(off.averagePrice, 120);
+    const on = (await updatePosition('READY2', { ready: true })).position;
+    assert.equal(on.ready, true);
+    assert.equal((await updatePosition('READY2', { caution: false, status: '', averagePrice: null })).position.ready, true);
+  }
+  assert.equal((await updatePosition('READY2', { ready: false })).position, null);
+});
+
+test('KV atomic merge retains ready-only records and permits boolean clearing', async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.KV_REST_API_URL = 'https://test.invalid';
+  process.env.KV_REST_API_TOKEN = 'test-token';
+  try {
+    globalThis.fetch = async (url, options) => {
+      const command = JSON.parse(options.body);
+      assert.equal(command[0], 'EVAL');
+      assert.match(command[1], /position.ready = position.ready == true/);
+      assert.match(command[1], /or position.caution or position.ready or/);
+      const changes = JSON.parse(command[5]);
+      return Response.json({ result: JSON.stringify(changes.ready ? {symbol:command[4],ready:true} : null) });
+    };
+    assert.equal((await updatePosition('READY3', { ready: true })).position.ready, true);
+    assert.equal((await updatePosition('READY3', { ready: false })).position, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.KV_REST_API_URL;
+    delete process.env.KV_REST_API_TOKEN;
+  }
 });
 
 test('KV field patch uses one atomic command and propagates storage failures', async () => {

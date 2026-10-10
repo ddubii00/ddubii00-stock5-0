@@ -81,3 +81,19 @@ test('an invalid saved password prevents writes, and entering the correct passwo
     assert.equal(storage.get('stock5-0-password'), 'test-only-password');
   } finally { stop(); }
 });
+
+test('ready changes use field-only PATCH and preserve existing long/short/caution records', async () => {
+  const { state, requests, positions } = await session('test-only-password');
+  const stop = state.startSharedPositions();
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    await state.saveSharedPosition('TEST1', { ready: true });
+    assert.deepEqual(JSON.parse(requests[1].body), {symbol:'TEST1',changes:{ready:true}});
+    assert.equal(positions.TEST1.ready, true);
+    assert.equal(positions.TEST1.status, 'long-hold');
+    assert.equal(positions.TEST1.caution, true);
+    await state.saveSharedPosition('TEST1', { ready: false });
+    assert.equal(positions.TEST1.ready, false);
+    assert.equal(positions.TEST1.caution, true);
+  } finally { stop(); }
+});

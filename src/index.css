@@ -229,7 +229,7 @@ html, body {
 }
 .symbol-details { display: contents; }
 /* Only quote details scroll. Focusing a record button must not scroll the
-   whole header or move the other four buttons. */
+   whole header or move the other record buttons. */
 .symbol-row--with-positions .symbol-details {
   display: flex;
   align-items: center;
@@ -400,12 +400,13 @@ html, body {
 
 /* ── MA LEGEND ── */
 .position-controls-wrapper { position: relative; flex-shrink: 0; margin-left: auto; }
-.position-mini-controls { display: flex; gap: 3px; align-items: center; flex-wrap: nowrap; margin: 0; }
-.position-mini-btn { flex-shrink: 0; white-space: nowrap; border: 1px solid #cbd5e1; border-radius: 5px; padding: 3px 5px; min-height: 24px; background: #fff; color: #475569; font-family: inherit; font-size: 11px; font-weight: 700; line-height: 1.35; cursor: pointer; }
+.position-mini-controls { display: flex; gap: 2px; align-items: center; flex-wrap: nowrap; margin: 0; }
+.position-mini-btn { flex-shrink: 0; white-space: nowrap; border: 1px solid #cbd5e1; border-radius: 5px; padding: 2px 3px; min-height: 22px; background: #fff; color: #475569; font-family: inherit; font-size: 11px; font-weight: 700; line-height: 1.35; cursor: pointer; }
 .position-mini-btn.long-hold.active { background: #dc2626; border-color: #dc2626; color: #fff; }
 .position-mini-btn.long-watch.active { background: rgba(220,38,38,.13); border-color: rgba(220,38,38,.55); color: #b91c1c; }
 .position-mini-btn.short-watch.active { background: rgba(37,99,235,.13); border-color: rgba(37,99,235,.55); color: #1d4ed8; }
 .position-mini-btn.short-hold.active { background: #2563eb; border-color: #2563eb; color: #fff; }
+.position-mini-btn.ready.active { background: #16a34a; border-color: #15803d; color: #fff; }
 .position-mini-btn.caution.active { background: #facc15; border-color: #ca8a04; color: #422006; box-shadow: inset 0 0 0 1px #ca8a04; }
 /* Keep errors visible without resizing the controls or neighboring charts. */
 .position-save-error {

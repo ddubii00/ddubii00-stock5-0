@@ -16,16 +16,18 @@ export function authorized(req) {
 function cleanPosition(symbol, value) {
   const status = VALID_STATUS.has(value?.status) ? value.status : '';
   const caution = value?.caution === true;
+  const ready = value?.ready === true;
   const average = Number(value?.averagePrice);
   const averagePrice = Number.isFinite(average) && average > 0 ? average : null;
 
-  if (!status && !caution && averagePrice == null) return null;
+  if (!status && !caution && !ready && averagePrice == null) return null;
 
   return {
     symbol: String(symbol || '').slice(0, 40),
     name: String(value?.name || '').slice(0, 120),
     status,
     caution,
+    ready,
     averagePrice,
     updatedAt: String(value?.updatedAt || new Date().toISOString()).slice(0, 40),
   };
@@ -111,7 +113,7 @@ export function saveState(value) {
 }
 
 // Merge only the changed fields in one Redis operation, so two devices updating
-// different stocks (or status and caution on one stock) cannot erase each other.
+// different stocks (or status, caution and ready on one stock) cannot erase each other.
 const PATCH_POSITION_LUA = `
 local state = cjson.decode(redis.call('GET', KEYS[1]) or '{"positions":{}}')
 state.positions = state.positions or {}
@@ -122,8 +124,9 @@ for key, value in pairs(changes) do position[key] = value end
 position.symbol = symbol
 position.updatedAt = ARGV[3]
 position.caution = position.caution == true
+position.ready = position.ready == true
 local active = (type(position.status) == 'string' and position.status ~= '')
-  or position.caution or (type(position.averagePrice) == 'number' and position.averagePrice > 0)
+  or position.caution or position.ready or (type(position.averagePrice) == 'number' and position.averagePrice > 0)
 if active then state.positions[symbol] = position else state.positions[symbol] = nil end
 redis.call('SET', KEYS[1], cjson.encode(state))
 return cjson.encode(active and position or cjson.null)
@@ -131,12 +134,13 @@ return cjson.encode(active and position or cjson.null)
 
 export function updatePosition(rawSymbol, changes) {
   const symbol = String(rawSymbol || '').trim().toUpperCase();
-  const allowedFields = new Set(['status', 'caution', 'averagePrice', 'name']);
+  const allowedFields = new Set(['status', 'caution', 'ready', 'averagePrice', 'name']);
   if (!/^[A-Z0-9^][A-Z0-9.^=_-]{0,39}$/.test(symbol)
     || !changes || typeof changes !== 'object' || Array.isArray(changes)
     || Object.keys(changes).some(key => !allowedFields.has(key))
     || ('status' in changes && changes.status !== '' && !VALID_STATUS.has(changes.status))
     || ('caution' in changes && typeof changes.caution !== 'boolean')
+    || ('ready' in changes && typeof changes.ready !== 'boolean')
     || ('name' in changes && (typeof changes.name !== 'string' || changes.name.length > 120))
     || ('averagePrice' in changes && changes.averagePrice !== null
       && !(typeof changes.averagePrice === 'number' && Number.isFinite(changes.averagePrice) && changes.averagePrice > 0))) {
