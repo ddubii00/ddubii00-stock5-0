@@ -1,16 +1,18 @@
 import { useCallback, useState } from 'react';
 import { useSharedPositions } from '../state/sharedPositions';
 import { POSITION_GROUPS } from '../utils/positionGroups';
+import { SAVED_STOCK_MARKETS, filterSavedStocks } from '../utils/savedStockMarkets';
 import StockListRow from './StockListRow';
 import StockChartDialog from './StockChartDialog';
 
 export default function SavedStocks({ showBollinger, globalWeekly }) {
   const { positions, authError } = useSharedPositions();
   const [filter, setFilter] = useState('all');
+  const [market, setMarket] = useState('all');
   const [query, setQuery] = useState('');
   const [selectedStock, setSelectedStock] = useState(null);
   const closeChart = useCallback(() => setSelectedStock(null), []);
-  const stocks = Object.values(positions).filter(stock => `${stock.name} ${stock.symbol}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const stocks = filterSavedStocks(positions, market, query);
   const groups = [...POSITION_GROUPS, ['', '준비! · 주의!만 표시한 종목']];
   return <main className="ma200-scanner saved-stocks">
     <div className="scan-toolbar"><h1>종목들</h1>
@@ -18,10 +20,15 @@ export default function SavedStocks({ showBollinger, globalWeekly }) {
         <option value="all">모든 기록</option>
         {groups.map(([status, label]) => <option value={status} key={status}>{label}</option>)}
       </select>
+      <select aria-label="저장 종목 시장구분" value={market} onChange={event => setMarket(event.target.value)}>
+        <option value="all">모든 시장</option>
+        {SAVED_STOCK_MARKETS.map(([key, label]) => <option value={key} key={key}>{label}</option>)}
+      </select>
       <input aria-label="저장 종목명 또는 코드" placeholder="종목명 / 코드" value={query} onChange={event => setQuery(event.target.value)} />
     </div>
     <p className="scan-description">1~7번에서 표시한 공유 기록입니다. 준비!는 초록색, 주의!는 노란색입니다. 다시 누르면 해제됩니다. 롱·숏 분류 변경은 종목명을 눌러 연 차트 팝업에서 할 수 있습니다.</p>
     <p className="scan-description">재무정보는 한 줄로 표시하며 좁은 화면에서는 표 안에서 가로 스크롤합니다. 미제공 값은 —, 추정값은 *로 표시합니다.</p>
+    <p className="scan-description">시장구분은 저장된 종목코드 기준입니다. 미국 종목은 거래소 정보가 따로 저장되어 있지 않아 NASDAQ 등 미국 시장으로 묶습니다. 분류 필터와 종목명/코드 검색을 함께 사용할 수 있습니다.</p>
     {authError && <p className="scan-error" role="alert">{authError}</p>}
     {groups.filter(([status]) => filter === 'all' || filter === status).map(([status, label]) => {
       const items = stocks.filter(stock => stock.status === status || (!status && !stock.status))

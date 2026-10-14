@@ -9,6 +9,8 @@ async (page) => {
     ['NVDA', '엔비디아', 'long-hold', true, true], ['AAPL', '애플', 'long-watch', false, true],
     ['MSFT', '마이크로소프트', 'short-watch', true, false], ['7203.T', '도요타', 'short-hold', false, false],
     ['AMD', 'AMD 준비만', '', true, false],
+    ['005930.KS', '삼성전자', 'long-watch', false, true],
+    ['247540.KQ', '에코프로비엠', 'short-watch', true, false],
   ];
   await page.evaluate(async rows => {
     for (const [symbol, name, status, ready, caution] of rows) {
@@ -64,6 +66,21 @@ async (page) => {
   await page.getByLabel('저장 종목 구분').selectOption('short-hold');
   check(await page.locator('.saved-stock-group').count() === 1 && (await page.locator('.saved-stocks').textContent()).includes('도요타'), 'status filter');
   await page.getByLabel('저장 종목 구분').selectOption('all');
+  await page.getByLabel('저장 종목 시장구분').selectOption('japan');
+  check(await page.locator('.saved-stock-table tbody tr').count() === 1 && (await page.locator('.saved-stocks').textContent()).includes('도요타'), 'Japan market filter');
+  await page.getByLabel('저장 종목 시장구분').selectOption('kospi');
+  check(await page.locator('.saved-stock-table tbody tr').count() === 1 && (await page.locator('.saved-stocks').textContent()).includes('삼성전자'), 'KOSPI market filter');
+  await page.getByLabel('저장 종목명 또는 코드').fill('NVDA');
+  check(await page.locator('.saved-stock-table tbody tr').count() === 0, 'market and query intersect');
+  await page.getByLabel('저장 종목 시장구분').selectOption('us');
+  check(await page.locator('.saved-stock-table tbody tr').count() === 1, 'US market and symbol query');
+  await page.getByLabel('저장 종목명 또는 코드').fill('');
+  await page.getByLabel('저장 종목 시장구분').selectOption('kosdaq');
+  check(await page.locator('.saved-stock-table tbody tr').count() === 1, 'KOSDAQ market filter');
+  await page.getByLabel('저장 종목 구분').selectOption('long-hold');
+  check(await page.locator('.saved-stock-table tbody tr').count() === 0, 'market and status intersect');
+  await page.getByLabel('저장 종목 구분').selectOption('all');
+  await page.getByLabel('저장 종목 시장구분').selectOption('all');
   await page.getByLabel('저장 종목명 또는 코드').fill('NVDA');
   check(await page.locator('.saved-stock-table tbody tr').count() === 1, 'name/code search');
   const wrap = page.locator('.saved-stocks .scan-table-wrap').first();
@@ -86,5 +103,5 @@ async (page) => {
   await page.getByLabel('저장 종목명 또는 코드').fill('');
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'mobile table scroll is internal');
   await page.setViewportSize({ width: 1600, height: 1000 });
-  return { scannerFinancials: financialText, singleLine, sharedMenu6To8: true, groups: 5, flagsOnly: true, headingColors, indicatorsRemoved: true, samePopup: true, sticky, separateBrowser: true, mobileInternalScroll: true };
+  return { scannerFinancials: financialText, singleLine, sharedMenu6To8: true, groups: 5, flagsOnly: true, headingColors, indicatorsRemoved: true, samePopup: true, sticky, separateBrowser: true, mobileInternalScroll: true, combinedMarketFilters: true };
 }
