@@ -30,7 +30,15 @@ async (page) => {
     && financialText.includes('시총1,232조원') && financialText.includes('매출97.1조원') && financialText.includes('영업이익47.2조원'), 'menu6 financial values');
   const singleLine = await row.locator('.fundamentals-metric').evaluateAll(nodes => new Set(nodes.map(node => Math.round(node.getBoundingClientRect().y))).size === 1);
   check(singleLine, 'financial metrics stay on a single line');
-  check((await row.locator('.position-mini-controls button').allTextContents()).join('|') === '준비!|주의!', 'scanner list has flags only');
+  const scannerOrder = '롱 보유|롱 관심|숏 관심|숏 보유|준비!|주의!';
+  check((await row.locator('.position-mini-controls button').allTextContents()).join('|') === scannerOrder, 'scanner list restores all status buttons before flags');
+  check(await row.locator('td').nth(3).textContent() === '2026-10-08', 'menu6 displays latest date only');
+  for (const name of ['롱 보유', '롱 관심', '숏 관심', '숏 보유']) {
+    const button = row.getByRole('button', { name, exact: true });
+    if (await button.getAttribute('aria-pressed') !== 'true') await button.click();
+    await page.waitForFunction(() => document.querySelector('.scan-table .position-mini-controls')?.getAttribute('aria-busy') === 'false');
+    check(await button.getAttribute('aria-pressed') === 'true', `menu6 can select ${name}`);
+  }
   await row.locator('.scan-stock-link').click();
   const popupControls = page.locator('.scan-chart-dialog .position-mini-controls');
   check(await popupControls.locator('button').count() === 6, 'popup preserves status buttons');
@@ -45,13 +53,20 @@ async (page) => {
   await page.getByLabel('차트 그룹 선택').selectOption('line-break');
   await page.locator('.scan-table tbody tr').first().waitFor();
   await page.waitForFunction(() => document.querySelector('.scan-table tbody .fundamentals-row')?.textContent.includes('7.52'));
+  const lineRow = page.locator('.scan-table tbody tr').first();
+  check((await lineRow.locator('.position-mini-controls button').allTextContents()).join('|') === scannerOrder, 'menu7 restores all status buttons');
+  check(await lineRow.locator('td').nth(3).textContent() === '2026-10-08', 'menu7 displays latest date only');
+  const lineShort = lineRow.getByRole('button', { name: '숏 관심', exact: true });
+  if (await lineShort.getAttribute('aria-pressed') !== 'true') await lineShort.click();
+  await page.waitForFunction(() => document.querySelector('.scan-table .position-mini-controls')?.getAttribute('aria-busy') === 'false');
+  check(await lineShort.getAttribute('aria-pressed') === 'true', 'menu7 changes shared status');
   await page.getByLabel('차트 그룹 선택').selectOption('saved-stocks');
   check(await page.locator('.saved-stock-group').count() === 5, 'four status groups plus flag-only records');
   const nvda = page.locator('.saved-stock-table tbody tr').filter({ hasText: 'NVDA' });
   await nvda.waitFor();
   await page.waitForFunction(() => [...document.querySelectorAll('.saved-stock-table tbody tr')].find(row => row.textContent.includes('NVDA'))?.textContent.includes('7.52'));
-  check((await nvda.locator('.position-mini-controls button').allTextContents()).join('|') === '준비!|주의!', 'saved list removes redundant status buttons');
-  check((await page.locator('.saved-stock-table thead tr').first().textContent()) === '종목준비! / 주의!재무정보', 'all four indicator columns removed');
+  check((await nvda.locator('.position-mini-controls button').allTextContents()).join('|') === '준비!|주의!|삭제', 'saved list has delete immediately after caution');
+  check((await page.locator('.saved-stock-table thead tr').first().textContent()) === '종목준비! / 주의! / 삭제재무정보', 'all four indicator columns removed');
   const headingColors = await page.locator('.saved-group-title').evaluateAll(nodes => nodes.slice(0,4).map(node => getComputedStyle(node).color));
   check(headingColors.join('|') === 'rgb(220, 38, 38)|rgba(220, 38, 38, 0.65)|rgba(21, 101, 192, 0.65)|rgb(21, 101, 192)', 'group headings distinguish all four record colors');
   check(await nvda.getByRole('button', { name: '준비!', exact: true }).getAttribute('aria-pressed') === 'true', 'ready persisted');
@@ -103,5 +118,5 @@ async (page) => {
   await page.getByLabel('저장 종목명 또는 코드').fill('');
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'mobile table scroll is internal');
   await page.setViewportSize({ width: 1600, height: 1000 });
-  return { scannerFinancials: financialText, singleLine, sharedMenu6To8: true, groups: 5, flagsOnly: true, headingColors, indicatorsRemoved: true, samePopup: true, sticky, separateBrowser: true, mobileInternalScroll: true, combinedMarketFilters: true };
+  return { scannerFinancials: financialText, singleLine, sharedMenu6To8: true, groups: 5, scannerStatusButtons: true, latestDateOnly: true, headingColors, indicatorsRemoved: true, samePopup: true, sticky, separateBrowser: true, mobileInternalScroll: true, combinedMarketFilters: true };
 }

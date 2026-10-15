@@ -97,3 +97,18 @@ test('ready changes use field-only PATCH and preserve existing long/short/cautio
     assert.equal(positions.TEST1.caution, true);
   } finally { stop(); }
 });
+
+test('reset sends a single field-only PATCH clearing all buttons and the average price', async () => {
+  const { state, requests, positions } = await session('test-only-password');
+  const stop = state.startSharedPositions();
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    await state.resetSharedPosition(' test1 ');
+    assert.deepEqual(JSON.parse(requests[1].body), { symbol: 'TEST1', changes: { status: '', ready: false, caution: false, averagePrice: null } });
+    assert.equal(positions.TEST1.status, '');
+    assert.equal(positions.TEST1.ready, false);
+    assert.equal(positions.TEST1.caution, false);
+    assert.equal(positions.TEST1.averagePrice, null);
+    assert.equal(requests.length, 2);
+  } finally { stop(); }
+});

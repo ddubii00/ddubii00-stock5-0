@@ -114,3 +114,9 @@ export async function saveSharedPosition(rawSymbol, changes) {
     publish({ saving: { ...snapshot.saving, [symbol]: false } });
   }
 }
+
+// Clear every field that keeps a shared position active in one atomic PATCH.
+// A failed save leaves the existing record visible; other stocks are untouched.
+export function resetSharedPosition(symbol) {
+  return saveSharedPosition(symbol, { status: '', ready: false, caution: false, averagePrice: null });
+}

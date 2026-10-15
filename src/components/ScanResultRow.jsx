@@ -14,11 +14,11 @@ export default function ScanResultRow({ row, lineBreak, upSignal, upLabel, downL
       onClick={() => onOpen({ symbol: row.symbol, name: row.name, weekly: interval === 'week' })}>{scanStockLabel(row.name)}</button><small title={row.symbol}>{row.symbol}</small></td>
     <td>{row.marketLabel}<small>{SCAN_MARKETS[row.market].currency}</small></td>
     <td className={signalClass}>{row.signal === upSignal ? upLabel : downLabel}</td>
-    <td>{row.previous.date} → {row.latest.date}</td><td>{price(row.previous.close)}</td>
+    <td>{row.latest.date}</td><td>{price(row.previous.close)}</td>
     {lineBreak ? <><td>{price(row.latest.close)}</td><td>{row.previous.direction === 'up' ? '양선' : '음선'}</td><td>{price(row.reversalPrice)}</td></>
       : <><td>{price(row.previous.ma200)}</td><td>{price(row.latest.close)}</td><td>{price(row.latest.ma200)}</td></>}
     <td className={signalClass}>{row.distancePct > 0 ? '+' : ''}{row.distancePct.toFixed(2)}%</td>
-    <td className="saved-record-cell"><PositionButtons symbol={row.symbol} name={row.name} flagsOnly /></td>
+    <td className="saved-record-cell"><PositionButtons symbol={row.symbol} name={row.name} /></td>
     <td className="stock-financial-cell"><FundamentalsRow symbol={visible ? row.symbol : null} /></td>
   </tr>;
 }

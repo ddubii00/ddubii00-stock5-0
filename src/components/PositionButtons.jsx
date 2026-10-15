@@ -1,11 +1,11 @@
-import { openPositionLogin, saveSharedPosition, useSharedPositions } from '../state/sharedPositions';
+import { openPositionLogin, resetSharedPosition, saveSharedPosition, useSharedPositions } from '../state/sharedPositions';
 
 const BUTTONS = [
   ['long-hold', '롱 보유'], ['long-watch', '롱 관심'],
   ['short-watch', '숏 관심'], ['short-hold', '숏 보유'],
 ];
 
-export default function PositionButtons({ symbol, name, flagsOnly = false }) {
+export default function PositionButtons({ symbol, name, flagsOnly = false, showReset = false }) {
   const state = useSharedPositions();
   const key = String(symbol || '').trim().toUpperCase();
   const position = state.positions[key];
@@ -32,6 +32,9 @@ export default function PositionButtons({ symbol, name, flagsOnly = false }) {
       <button type="button" className={`position-mini-btn caution${position?.caution ? ' active' : ''}`}
         aria-pressed={position?.caution === true} aria-disabled={saving}
         onClick={() => toggleFlag('caution')}>주의!</button>
+      {showReset && <button type="button" className="position-mini-btn reset" aria-disabled={saving}
+        title="이 종목의 롱·숏, 준비!, 주의!, 평균가 기록을 초기화하고 공유 목록에서 삭제합니다."
+        onClick={() => { if (!saving) void resetSharedPosition(key); }}>삭제</button>}
     </div>
     {state.errors[key] && <small className="position-save-error" role="alert" title={state.errors[key]}>{state.errors[key]}</small>}
   </div>;

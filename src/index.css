@@ -408,6 +408,8 @@ html, body {
 .position-mini-btn.short-hold.active { background: #2563eb; border-color: #2563eb; color: #fff; }
 .position-mini-btn.ready.active { background: #16a34a; border-color: #15803d; color: #fff; }
 .position-mini-btn.caution.active { background: #facc15; border-color: #ca8a04; color: #422006; box-shadow: inset 0 0 0 1px #ca8a04; }
+.position-mini-btn.reset { color: #b91c1c; }
+.position-mini-btn.reset:hover { background: #fff1f2; border-color: #fca5a5; }
 /* Keep errors visible without resizing the controls or neighboring charts. */
 .position-save-error {
   position: absolute;
@@ -678,10 +680,11 @@ html, body {
 .fundamentals-metric b { color: var(--text); font-weight: 600; }
 
 .scan-price-col { width: 105px; }
-.saved-record-col { width: 100px; }
+.saved-record-col { width: 140px; }
+.scan-record-col { width: 265px; }
 .stock-financial-col { width: 820px; }
-.scan-table:has(.stock-financial-col) { min-width: 2000px; width: max(100%, 2000px); }
-.scan-table.saved-stock-table { min-width: 1140px; width: 100%; }
+.scan-table:has(.stock-financial-col) { min-width: 2100px; width: max(100%, 2100px); }
+.scan-table.saved-stock-table { min-width: 1180px; width: 100%; }
 .saved-stock-table .stock-financial-col { width: auto; }
 .stock-financial-cell .fundamentals-row { border: 0; background: transparent; padding: 0; overflow: visible; font-size: 12px; }
 .scan-table .fundamentals-metric > span { display: inline; font-size: inherit; color: var(--muted); }
@@ -734,7 +737,7 @@ html, body {
 .scan-stock-col { width: calc(15em + 20px); }
 .scan-market-col { width: 110px; }
 .scan-signal-col { width: 64px; }
-.scan-date-col { width: 184px; }
+.scan-date-col { width: 112px; }
 .scan-table th, .scan-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: right; }
 .scan-table th { position: sticky; top: 0; z-index: 2; background: var(--panel2); font-weight: 600; }
 .scan-table .scan-stock-cell { position: sticky; left: 0; z-index: 1; background: var(--panel); box-shadow: 1px 0 var(--border); }

@@ -60,6 +60,19 @@ test('each exclusive status can be set and cleared; caution toggles independentl
   assert.equal((await loadState()).positions.NVDA, undefined);
 });
 
+test('one reset PATCH removes a full position and flag-only records from persistent storage without touching another stock', async () => {
+  const peer = (await updatePosition('RESETPEER', { status: 'short-watch', ready: true })).position;
+  for (const status of ['', 'long-hold', 'long-watch', 'short-watch', 'short-hold']) {
+    await updatePosition('RESETTARGET', { name: '삭제 검증', status, ready: true, caution: true, averagePrice: 123 });
+    const reset = await request('PATCH', { symbol: 'RESETTARGET', changes: { status: '', ready: false, caution: false, averagePrice: null } });
+    assert.equal(reset.status, 200);
+    assert.equal(reset.body.position, null);
+    const records = (await loadState()).positions;
+    assert.equal(records.RESETTARGET, undefined);
+    assert.deepEqual(records.RESETPEER, peer);
+  }
+});
+
 test('concurrent field updates merge without erasing another device record', async () => {
   await Promise.all([
     updatePosition('AAPL', { status: 'long-watch' }),
