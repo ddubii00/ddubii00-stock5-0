@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readFile } from 'node:fs/promises';
 import { analyzeCloudHistory, cloudCrossing, cloudResultForTarget, weeklyCloudBars } from '../src/utils/cloudScan.js';
 import { scanReference } from '../src/utils/ma200Scan.js';
 import { calculateIchimoku, calculateMA } from '../src/utils/indicators.js';
@@ -48,6 +49,67 @@ test('cloud edges are inclusive only for the previous inside state; old trends, 
   assert.equal(cloudCrossing(89, 90, 100, 110, 90, 100), null);
   assert.equal(cloudCrossing(105, 100, 110, 105, 90, 100), 'breakout', 'each bar uses its own moving cloud');
   assert.equal(cloudCrossing(null, 90, 100, 101, 90, 100), null);
+});
+
+test('zero-width clouds include line crossings in either direction, using each period\'s own line', () => {
+  assert.equal(cloudCrossing(99, 100, 100, 101, 100, 100), 'breakout');
+  assert.equal(cloudCrossing(101, 100, 100, 99, 100, 100), 'breakdown');
+  assert.equal(cloudCrossing(100, 100, 100, 101, 100, 100), 'breakout');
+  assert.equal(cloudCrossing(100, 100, 100, 99, 100, 100), 'breakdown');
+  assert.equal(cloudCrossing(99, 100, 100, 100, 100, 100), null, 'today only touches the line');
+  assert.equal(cloudCrossing(101, 100, 100, 102, 100, 100), null, 'already above yesterday');
+  assert.equal(cloudCrossing(99, 100, 100, 98, 100, 100), null, 'still below');
+  assert.equal(cloudCrossing(99, 100, 100, 109, 110, 110), null, 'not a crossing of the moving line');
+  assert.equal(cloudCrossing(99, 100, 100, 111, 110, 110), 'breakout');
+  assert.equal(cloudCrossing(101, 100, 100, 89, 90, 90), 'breakdown');
+  assert.equal(cloudCrossing(89, 90, 100, 101, 100, 100), null, 'a previous nonzero cloud still requires being inside');
+});
+
+test('flat clouds support candle/SMA20 crossings on both daily and weekly histories and old cached points', () => {
+  for (const step of [1, 7]) for (const direction of ['up', 'down']) {
+    const bars = history(79, step).map(bar => ({ ...bar, high: 110, low: 90, close: direction === 'up' ? 99 : 101 }));
+    bars.at(-1).close = direction === 'up' ? 121 : 79;
+    const result = analyzeCloudHistory(bars, scanReference(bars))[step === 1 ? 'day' : 'week'];
+    const expected = direction === 'up' ? 'breakout' : 'breakdown';
+    assert.equal(result.previous.spanA, result.previous.spanB);
+    assert.equal(result.latest.spanA, result.latest.spanB);
+    assert.equal(result.signal, expected);
+    assert.equal(cloudResultForTarget(result, 'candle').signal, expected);
+    const oldCache = { ...result, signal: null, distancePct: 0 };
+    assert.equal(cloudResultForTarget(oldCache, 'ma20').signal, expected, 'old checkpoints are re-evaluated without a full rescan');
+    assert.equal(cloudResultForTarget(oldCache, 'candle').signal, expected);
+    assert.equal(oldCache.signal, null, 'stored original points are not mutated');
+  }
+});
+
+test('restored v5 snapshots expose new flat-line matches in both targets without loading market data', async () => {
+  const now = Date.parse('2026-10-30T14:00:00Z');
+  const old = { status: 'ready', signal: null, distancePct: 0,
+    previous: { date: '2026-10-29', close: 101, ma20: 99, cloudLow: 100, cloudHigh: 100 },
+    latest: { date: '2026-10-30', close: 99, ma20: 101, cloudLow: 100, cloudHigh: 100 } };
+  const saved = { version: 5, status: 'done', updatedAt: new Date(now).toISOString(), completedAt: new Date(now).toISOString(),
+    markets: ['kospi', 'kosdaq', 'nasdaq', 'japan'].map(key => ({ key, phase: 'done', total: 1,
+      rows: [{ symbol: key, name: key, cloud: { day: old, week: old } }] })) };
+  const noLoad = async () => { throw new Error('No provider calls allowed for cached flat-line matches'); };
+  const scanner = createMa200Scanner({ now: () => now, readCheckpoint: async () => saved, loadHistory: noLoad, loadUniverse: noLoad });
+  await scanner.start(false, 'cloud');
+  for (const interval of ['day', 'week']) {
+    assert.ok((await scanner.snapshot(interval, 'cloud')).markets.every(m => m.results[0].signal === 'breakout'));
+    assert.ok((await scanner.snapshot(interval, 'cloud-candle')).markets.every(m => m.results[0].signal === 'breakdown'));
+  }
+  assert.equal(old.signal, null);
+});
+
+test('DB손해보험 2026-10-30 weekly regression: preserve exact small exit, but exclude genuinely inside/inside points', async () => {
+  const fixture = JSON.parse(await readFile(new URL('./fixtures/db-cloud-weekly.json', import.meta.url), 'utf8'));
+  const bars = fixture.bars, result = analyzeCloudHistory(bars, scanReference(bars), bars).week;
+  assert.equal(result.previous.ma20, 170880); assert.equal(result.latest.ma20, 172700);
+  assert.equal(result.previous.cloudHigh, 176200); assert.equal(result.latest.cloudHigh, 172425);
+  assert.equal(result.signal, 'breakout', 'actual source SMA20 is 275 above the cloud: do not invent an exclusion');
+  const cloud = calculateIchimoku(bars), ma = calculateMA(bars, 20);
+  assert.equal(result.latest.spanA, cloud.at(-1).senkouA); assert.equal(result.latest.ma20, ma.at(-1).value);
+  const inside = { ...result, latest: { ...result.latest, ma20: 172000 } };
+  assert.equal(cloudResultForTarget(inside, 'ma20').signal, null, 'inside/inside can never remain a cached breakout');
 });
 
 test('candle closes and SMA20 are independent signals; wicks alone and an already outside previous close do not qualify', () => {

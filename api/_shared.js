@@ -1,5 +1,6 @@
 import process from 'node:process';
 import YahooFinance from 'yahoo-finance2';
+import { fetchKoreanWeeklyOhlcv } from './_koreanWeekly.js';
 
 export const yahooFinance = new YahooFinance();
 
@@ -439,6 +440,7 @@ async function fetchKoreanMinuteOhlcv(code, interval, limit) {
 }
 
 export async function fetchKoreanOhlcv(code, interval, limit) {
+  if (interval === 'week') return fetchKoreanWeeklyOhlcv(code, limit);
   if (interval !== 'day') {
     const cleanCode = code.replace(/\.(KS|KQ)$/, '');
     const normalizedInterval = interval === '1h' ? '60m' : interval;

@@ -5,6 +5,14 @@ export const CLOUD_REQUIRED_BARS = 79; // 52 + 26 displacement + two comparable 
 
 export function cloudCrossing(previousMA, previousLow, previousHigh, latestMA, latestLow, latestHigh) {
   if (![previousMA, previousLow, previousHigh, latestMA, latestLow, latestHigh].every(Number.isFinite)) return null;
+  if (previousLow > previousHigh || latestLow > latestHigh) return null;
+  // A zero-width cloud is a line, not an area that the previous value must
+  // occupy. Compare each value with its own period's line (which can move).
+  if (previousLow === previousHigh && latestLow === latestHigh) {
+    if (previousMA <= previousHigh && latestMA > latestHigh) return 'breakout';
+    if (previousMA >= previousLow && latestMA < latestLow) return 'breakdown';
+    return null;
+  }
   if (previousMA < previousLow || previousMA > previousHigh) return null;
   if (latestMA > latestHigh) return 'breakout';
   if (latestMA < latestLow) return 'breakdown';
@@ -14,12 +22,17 @@ export function cloudCrossing(previousMA, previousLow, previousHigh, latestMA, l
 // Candles use the actual close, not high/low wick touches. Both targets reuse
 // the same displaced cloud and reference periods, without provider requests.
 export function cloudResultForTarget(result, target = 'ma20') {
-  if (target !== 'candle' || result?.status !== 'ready') return result;
+  if (result?.status !== 'ready') return result;
   const { previous, latest } = result;
-  const signal = cloudCrossing(previous.close, previous.cloudLow, previous.cloudHigh,
-    latest.close, latest.cloudLow, latest.cloudHigh);
+  const field = target === 'candle' ? 'close' : 'ma20';
+  const signal = cloudCrossing(previous[field], previous.cloudLow, previous.cloudHigh,
+    latest[field], latest.cloudLow, latest.cloudHigh);
   const boundary = signal === 'breakdown' ? latest.cloudLow : latest.cloudHigh;
-  return { ...result, signal, distancePct: (latest.close / boundary - 1) * 100 };
+  const distancePct = (latest[field] / boundary - 1) * 100;
+  // Re-evaluate stored points too: new flat-line matches must appear without
+  // discarding the shared full-market checkpoint or refetching every stock.
+  if (result.signal === signal && result.distancePct === distancePct) return result;
+  return { ...result, signal, distancePct };
 }
 
 function invalidHighLow(bar) {

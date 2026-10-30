@@ -15,6 +15,7 @@ import fundamentalsHandler from '../api/fundamentals.js';
 import ma200ScanHandler from '../api/ma200-scan.js';
 import lineBreakScanHandler from '../api/line-break-scan.js';
 import cloudScanHandler from '../api/cloud-scan.js';
+import { fetchKoreanWeeklyOhlcv } from '../api/_koreanWeekly.js';
 
 dotenv.config({ path: '.env.local', quiet: true });
 dotenv.config({ quiet: true });
@@ -1033,6 +1034,7 @@ async function fetchUsOhlcv(symbol, interval, limit) {
 }
 
 async function fetchKoreanOhlcv(code, interval, limit) {
+  if (interval === 'week') return fetchKoreanWeeklyOhlcv(code, limit);
   if (interval !== 'day') {
     const cleanCode = code.replace(/\.(KS|KQ)$/, '');
     const normalizedInterval = interval === '1h' ? '60m' : interval;
