@@ -6,7 +6,7 @@ import { analyzeCloudHistory, cloudResultForTarget } from '../src/utils/cloudSca
 
 const yahoo = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 const HISTORY_LIMIT = 1250; // Enough daily closes for 201 weekly bars, including holidays.
-const SCAN_VERSION = 4;
+const SCAN_VERSION = 5;
 const CACHE_MS = 15 * 60 * 1000;
 
 export async function fetchScanHistory(symbol, market, limit = HISTORY_LIMIT) {
@@ -76,10 +76,18 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
   };
   async function restoreOnce() {
     if (!restore) restore = Promise.resolve().then(readCheckpoint).then(saved => {
-      if ([1, 2, 3, SCAN_VERSION].includes(saved?.version) && Array.isArray(saved.markets) && saved.markets.length === 4
+      if ([1, 2, 3, 4, SCAN_VERSION].includes(saved?.version) && Array.isArray(saved.markets) && saved.markets.length === 4
         && saved.markets.every(m => Object.hasOwn(SCAN_MARKETS, m.key) && Array.isArray(m.rows))) {
         state = saved;
         if (state.status === 'running') state.status = 'interrupted';
+        if (saved.version < 5) {
+          // Recheck only cloud failures produced by the former whole-history
+          // high/low/close check. Preserve valid clouds and all MA/line-break rows.
+          for (const market of state.markets) for (const row of market.rows) {
+            if (row.cloud && [row.cloud.day, row.cloud.week].some(info => info?.status === 'error'
+              && info.error === '구름 계산에 필요한 실제 고가·저가 자료가 없거나 잘못되었습니다.')) delete row.cloud;
+          }
+        }
         if (saved.version === 1) {
           // Recheck only old weekly-short exclusions when the reference session
           // still matches; keep other results instead of rescanning every stock.

@@ -22,13 +22,8 @@ export function cloudResultForTarget(result, target = 'ma20') {
   return { ...result, signal, distancePct: (latest.close / boundary - 1) * 100 };
 }
 
-function candles(history) {
-  const result = normalizeDailyHistory(history);
-  if (result.some(bar => !Number.isFinite(bar.high) || !Number.isFinite(bar.low)
-    || bar.low <= 0 || bar.high < bar.low || bar.close < bar.low || bar.close > bar.high)) {
-    throw new Error('구름 계산에 필요한 실제 고가·저가 자료가 없거나 잘못되었습니다.');
-  }
-  return result;
+function invalidHighLow(bar) {
+  return !Number.isFinite(bar.high) || !Number.isFinite(bar.low) || bar.low <= 0 || bar.high < bar.low;
 }
 
 export function weeklyCloudBars(daily) {
@@ -37,7 +32,8 @@ export function weeklyCloudBars(daily) {
     const time = weeklyCloses([bar])[0].time;
     const previous = weeks.get(time);
     weeks.set(time, { time, high: Math.max(previous?.high ?? -Infinity, bar.high),
-      low: Math.min(previous?.low ?? Infinity, bar.low), close: bar.close, lastDate: bar.time });
+      low: Math.min(previous?.low ?? Infinity, bar.low), close: bar.close, lastDate: bar.time,
+      ...(previous?.invalidHighLow || invalidHighLow(bar) ? { invalidHighLow: true } : {}) });
   }
   return [...weeks.values()];
 }
@@ -51,6 +47,12 @@ function compare(bars, reference, interval) {
   }
   // Both current cloud values and both SMA20 values depend on only 79 bars.
   bars = bars.slice(-CLOUD_REQUIRED_BARS);
+  // The displayed cloud uses highs/lows only through 26 bars before now.
+  // Older unused data must not exclude an otherwise calculable stock. Like the
+  // chart, retain provider prices verbatim: adjusted/rounded closes can differ
+  // from the reported high/low by a unit, without invalidating the cloud inputs.
+  const invalid = bars.slice(0, -26).find(bar => invalidHighLow(bar) || bar.invalidHighLow);
+  if (invalid) return { status: 'error', error: `구름 계산 구간의 고가·저가 자료가 잘못되었습니다 (${invalid.time}).` };
   const cloud = calculateIchimoku(bars), averages = calculateMA(bars, 20);
   const point = index => {
     const { senkouA, senkouB } = cloud[index];
@@ -67,12 +69,12 @@ function compare(bars, reference, interval) {
 
 export function analyzeCloudHistory(history, reference, weeklyHistory = null) {
   let daily;
-  try { daily = candles(history).filter(bar => bar.time <= reference.day.latest); }
+  try { daily = normalizeDailyHistory(history).filter(bar => bar.time <= reference.day.latest); }
   catch (error) { const failed = { status: 'error', error: error.message }; return { day: failed, week: failed }; }
   const day = compare(daily, reference.day, 'day');
   try {
     let weeks = weeklyCloudBars(daily);
-    const native = weeklyHistory ? weeklyCloudBars(candles(weeklyHistory)).filter(bar => bar.time <= reference.week.latest) : [];
+    const native = weeklyHistory ? weeklyCloudBars(normalizeDailyHistory(weeklyHistory)).filter(bar => bar.time <= reference.week.latest) : [];
     // Do not let an initial partial daily week replace a full native range.
     // Recent weeks use the daily snapshot only, including actual trading dates.
     if (weeks.length > 1 && daily[0].time > weeks[0].time) {

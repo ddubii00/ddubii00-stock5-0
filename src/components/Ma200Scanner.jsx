@@ -14,10 +14,10 @@ const excludedReason = (row, interval, lineBreak, cloud) => row.status === 'shor
 export default function Ma200Scanner({ showBollinger = false, globalWeekly = false, indicator = 'ma200' }) {
   const lineBreak = indicator === 'line-break';
   const cloud = indicator === 'cloud';
-  const [cloudTarget, setCloudTarget] = useState('ma20');
+  const [cloudTarget, setCloudTarget] = useState('candle');
   const candleCloud = cloudTarget === 'candle';
   const basis = candleCloud ? '종가' : '20이평';
-  const title = cloud ? `구름돌파 · ${candleCloud ? '캔들봉(종가)' : '20이평'} 돌파/하락` : lineBreak ? '삼선전환도 양전환/음전환' : '200이평 돌파/붕괴';
+  const title = cloud ? `구름돌파 · ${candleCloud ? '종가 기준' : '20이평선 자체'} 돌파/하락` : lineBreak ? '삼선전환도 양전환/음전환' : '200이평 돌파/붕괴';
   const endpoint = cloud ? 'cloud-scan' : lineBreak ? 'line-break-scan' : 'ma200-scan';
   const upSignal = lineBreak ? 'bullish' : 'breakout';
   const downSignal = lineBreak ? 'bearish' : 'breakdown';
@@ -96,7 +96,7 @@ export default function Ma200Scanner({ showBollinger = false, globalWeekly = fal
     <div className="scan-toolbar">
       <h1>{title}</h1>
       {cloud && <select aria-label="구름돌파 검색 기준" value={cloudTarget} onChange={changeFilter(setCloudTarget)}>
-        <option value="ma20">20이평</option><option value="candle">캔들봉(종가)</option>
+        <option value="candle">캔들 종가 기준</option><option value="ma20">20이평선 자체</option>
       </select>}
       <div className="scan-timeframes" aria-label="검색 봉 단위">
         <button type="button" aria-pressed={interval === 'day'} onClick={() => { setInterval('day'); setPage(1); }}>일</button>
@@ -125,6 +125,9 @@ export default function Ma200Scanner({ showBollinger = false, globalWeekly = fal
         : ' 돌파: 이전 ≤ 이평, 최근 ≥ 이평. 붕괴: 이전 ≥ 이평, 최근 ≤ 이평. 두 기간 모두 이평과 같으면 제외합니다.'}
       {' '}장중 종가는 조회 시점의 값이며 신호가 바뀔 수 있습니다.
     </p>
+    {cloud && <p className="scan-description">{candleCloud
+      ? '현재 검색은 종가 기준입니다. 이전 봉 종가가 구름 안 → 최근 봉 종가가 구름 위/아래인 종목만 표시합니다. 장중에는 제공처 일봉/주봉의 최근 가격을 사용하며 시세가 지연될 수 있습니다.'
+      : '현재 검색은 20이평선 자체 기준이며 종가 기준이 아닙니다. 종가가 계속 구름 밖에 있어도 20이평선이 구름을 빠져나오면 검색됩니다. 종가 조건으로 찾으려면 「캔들 종가 기준」을 선택하세요.'}</p>}
     {cloud && <p className="scan-description">기존 일목 차트와 같은 9·26·52 / 26봉 선행 설정입니다. 미래에 그릴 구름이 아닌 해당 봉에 표시되는 구름을 사용합니다. 실제 고가·저가로 계산하며 최소 79개 봉이 필요합니다. 주봉의 고가·저가는 한 주 전체를 집계합니다. 최근 주봉은 진행 중으로 신호가 바뀔 수 있습니다. 6·7·8번은 검색 작업을 공유합니다.</p>}
     {lineBreak && <p className="scan-description">최근 캔들 3개가 아닌 실제 생성된 전환선 3개를 비교합니다. 확보된 일봉 최대 1,250개와 주봉 자료로 계산하며, 전환선이 충분하지 않으면 제외합니다. 최근 주봉은 진행 중일 수 있습니다. 6번·7번은 같은 백그라운드 검색을 공유합니다.</p>}
     <p className="scan-description">KOSPI·KOSDAQ 전체 주식, NASDAQ 상장주식(ETF·테스트·워런트·유닛·권리·채권 제외), 도쿄 Prime·Standard·Growth 주식. 일본 목록은 JPX의 최근 월말 자료 기준입니다.</p>

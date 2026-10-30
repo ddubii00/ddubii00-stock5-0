@@ -70,6 +70,67 @@ test('candle closes and SMA20 are independent signals; wicks alone and an alread
   assert.equal(cloudResultForTarget({ status: 'error', error: 'missing' }, 'candle').status, 'error');
 });
 
+test('GS건설 live-response regression: both closes below the cloud are not a candle breakdown, even when SMA20 exits', () => {
+  const ma = { status: 'ready', signal: 'breakdown',
+    previous: { date: '2026-10-29', close: 29200, ma20: 30232.5, cloudLow: 30125, cloudHigh: 35937.5 },
+    latest: { date: '2026-10-30', close: 25600, ma20: 29807.5, cloudLow: 30125, cloudHigh: 36200 } };
+  assert.equal(cloudResultForTarget(ma, 'candle').signal, null);
+  assert.equal(cloudResultForTarget(ma, 'ma20').signal, 'breakdown');
+  const inside = { ...ma, previous: { ...ma.previous, close: 31000 } };
+  assert.equal(cloudResultForTarget(inside, 'candle').signal, 'breakdown');
+  assert.equal(cloudResultForTarget({ ...inside, latest: { ...inside.latest, close: 36201 } }, 'candle').signal, 'breakout');
+  assert.equal(cloudResultForTarget({ ...inside, latest: { ...inside.latest, close: 36200 } }, 'candle').signal, null);
+  assert.equal(cloudResultForTarget({ ...ma, previous: { ...ma.previous, close: 36000 } }, 'candle').signal, null);
+});
+
+test('irrelevant old OHLC and provider rounding must not exclude valid current daily/weekly cloud calculations', () => {
+  const full = history(1250), reference = scanReference(full);
+  const expected = analyzeCloudHistory(full, reference);
+  const altered = full.map(row => ({ ...row }));
+  altered[5].high = null; altered[6].low = 0;
+  assert.deepEqual(analyzeCloudHistory(altered, reference), expected, 'years-old unused high/low errors cannot invalidate recent clouds');
+  const rounded = full.map(row => ({ ...row }));
+  rounded.at(-50).high = rounded.at(-50).close - 1;
+  const result = analyzeCloudHistory(rounded, reference);
+  assert.equal(result.day.status, 'ready', 'raw close can be one currency unit outside adjusted/rounded high, like the chart');
+  assert.equal(result.week.status, 'ready');
+  assert.equal(rounded.at(-50).high, rounded.at(-50).close - 1, 'never invent a high to fit the close');
+  const future = [...full, { time: '2040-01-01', close: 100, high: null, low: 0 }];
+  assert.deepEqual(analyzeCloudHistory(future, reference), expected);
+});
+
+test('only high/low actually needed by each displaced cloud is validated, with independent daily and weekly failures', () => {
+  const full = history(1250), reference = scanReference(full);
+  const badDaily = full.map(row => ({ ...row })); badDaily.at(-50).high = null;
+  const dayError = analyzeCloudHistory(badDaily, reference);
+  assert.equal(dayError.day.status, 'error'); assert.match(dayError.day.error, new RegExp(badDaily.at(-50).time));
+  assert.equal(dayError.week.status, 'ready');
+  const badWeekly = full.map(row => ({ ...row })); badWeekly.at(-180).high = null;
+  const weekError = analyzeCloudHistory(badWeekly, reference);
+  assert.equal(weekError.day.status, 'ready'); assert.equal(weekError.week.status, 'error');
+  const notNeeded = full.map(row => ({ ...row })); notNeeded.at(-2).high = null;
+  assert.equal(analyzeCloudHistory(notNeeded, reference).day.status, 'ready', 'recent candle wicks are not inputs to the already displaced cloud');
+});
+
+test('v4 overly strict cloud failures are lazily retried while valid results and MA/line-break records remain cached', async () => {
+  const full = history(1250); let saved, calls = 0;
+  const options = { loadUniverse: async key => ({ items: [0, 1].map(i => ({ symbol: `${key}${i}`, name: `${key}${i}` })) }),
+    loadHistory: async () => { calls++; return full; }, writeCheckpoint: async value => { saved = value; } };
+  const first = createMa200Scanner(options); await first.start(false, 'cloud'); await first.settled();
+  saved.version = 4;
+  for (const m of saved.markets) m.rows[0].cloud = { day: { status: 'error', error: '구름 계산에 필요한 실제 고가·저가 자료가 없거나 잘못되었습니다.' }, week: { status: 'error', error: '구름 계산에 필요한 실제 고가·저가 자료가 없거나 잘못되었습니다.' } };
+  const originalCalls = calls;
+  const restored = createMa200Scanner({ ...options, readCheckpoint: async () => saved });
+  await restored.start(false, 'ma200'); assert.equal(calls, originalCalls);
+  assert.equal((await restored.snapshot('day', 'cloud-candle')).status, 'interrupted');
+  assert.ok((await restored.snapshot('day', 'ma200')).markets.every(m => m.completed === 2));
+  await restored.start(false, 'cloud-candle'); await restored.settled();
+  assert.equal(calls - originalCalls, 8, 'four benchmarks plus four failed stocks only');
+  assert.equal((await restored.snapshot('day', 'cloud-candle')).status, 'done');
+  assert.ok((await restored.snapshot('day', 'cloud-candle')).markets.every(m => m.valid === 2));
+  assert.equal(saved.version, 5);
+});
+
 test('minimum warmup, missing real high/low and stale actual trading dates remain explicit; future bars cannot affect the reference', () => {
   const bars = history();
   const reference = scanReference(bars);
@@ -148,8 +209,8 @@ test('cloud API validates targets and authenticates both candle and MA20 modes',
   assert.equal((await request('__proto__')).code, 400);
   assert.deepEqual((await request('candle')).data.args, ['week', 'cloud-candle']);
   assert.deepEqual((await request('ma20')).data.args, ['week', 'cloud']);
-  assert.deepEqual((await request(undefined)).data.args, ['week', 'cloud']);
-  assert.deepEqual(calls, [[false, 'cloud-candle'], [false, 'cloud'], [false, 'cloud']]);
+  assert.deepEqual((await request(undefined)).data.args, ['week', 'cloud-candle']);
+  assert.deepEqual(calls, [[false, 'cloud-candle'], [false, 'cloud'], [false, 'cloud-candle']]);
 });
 
 test('cloud endpoint has the same authentication/interval checks and forwards the indicator', async () => {
