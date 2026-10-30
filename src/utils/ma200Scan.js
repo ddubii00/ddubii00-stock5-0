@@ -17,7 +17,8 @@ export function normalizeDailyHistory(history) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(time) || !Number.isFinite(row.close) || row.close <= 0) {
       throw new Error('일봉 날짜 또는 종가가 잘못되었습니다.');
     }
-    byDate.set(time, { time, close: row.close });
+    byDate.set(time, { time, close: row.close,
+      ...Object.fromEntries(['open', 'high', 'low'].filter(key => key in row).map(key => [key, row[key]])) });
   }
   return [...byDate.values()].sort((a, b) => a.time.localeCompare(b.time));
 }

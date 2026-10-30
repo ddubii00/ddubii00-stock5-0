@@ -2,10 +2,11 @@ import YahooFinance from 'yahoo-finance2';
 import { loadScanUniverse } from './_scanUniverse.js';
 import { SCAN_MARKETS, analyzeMa200History, normalizeDailyHistory, scanReference } from '../src/utils/ma200Scan.js';
 import { analyzeLineBreakHistory } from '../src/utils/lineBreakScan.js';
+import { analyzeCloudHistory, cloudResultForTarget } from '../src/utils/cloudScan.js';
 
 const yahoo = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 const HISTORY_LIMIT = 1250; // Enough daily closes for 201 weekly bars, including holidays.
-const SCAN_VERSION = 3;
+const SCAN_VERSION = 4;
 const CACHE_MS = 15 * 60 * 1000;
 
 export async function fetchScanHistory(symbol, market, limit = HISTORY_LIMIT) {
@@ -19,7 +20,7 @@ export async function fetchScanHistory(symbol, market, limit = HISTORY_LIMIT) {
     if (!response.ok) throw new Error(`일봉 조회 실패 (${response.status})`);
     return [...(await response.text()).matchAll(/item data="([^"]+)"/g)].map(match => {
       const fields = match[1].split('|');
-      return { date: fields[0], close: Number(fields[4]) };
+      return { date: fields[0], open: Number(fields[1]), high: Number(fields[2]), low: Number(fields[3]), close: Number(fields[4]) };
     }).slice(-limit);
   }
   const period1 = new Date(Date.now() - (limit * 2.5 + 20) * 86400000);
@@ -27,7 +28,7 @@ export async function fetchScanHistory(symbol, market, limit = HISTORY_LIMIT) {
   const timeZone = market === 'japan' ? 'Asia/Tokyo' : ['kospi', 'kosdaq'].includes(market) ? 'Asia/Seoul' : 'America/New_York';
   const formatter = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
   return (data.quotes || []).filter(row => row.close != null).map(row => ({
-    time: formatter.format(new Date(row.date)), close: row.close,
+    time: formatter.format(new Date(row.date)), open: row.open, high: row.high, low: row.low, close: row.close,
   })).slice(-limit);
 }
 
@@ -42,7 +43,7 @@ export async function fetchScanWeeklyHistory(symbol, market, limit = 300) {
     if (!response.ok) throw new Error(`주봉 추가 조회 실패 (${response.status})`);
     rows = [...(await response.text()).matchAll(/item data="([^"]+)"/g)].map(match => {
       const fields = match[1].split('|');
-      return { time: fields[0], close: Number(fields[4]) };
+      return { time: fields[0], open: Number(fields[1]), high: Number(fields[2]), low: Number(fields[3]), close: Number(fields[4]) };
     });
   } else {
     const period1 = new Date(Date.now() - (limit * 7 + 30) * 86400000);
@@ -50,7 +51,7 @@ export async function fetchScanWeeklyHistory(symbol, market, limit = 300) {
     const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: market === 'japan' ? 'Asia/Tokyo' : 'America/New_York',
       year: 'numeric', month: '2-digit', day: '2-digit' });
     rows = (data.quotes || []).filter(row => row.close != null).map(row => ({
-      time: formatter.format(new Date(row.date)), close: row.close,
+      time: formatter.format(new Date(row.date)), open: row.open, high: row.high, low: row.low, close: row.close,
     }));
   }
   if (!rows.length) throw new Error('주봉 추가 조회 결과가 비어 있습니다.');
@@ -75,7 +76,7 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
   };
   async function restoreOnce() {
     if (!restore) restore = Promise.resolve().then(readCheckpoint).then(saved => {
-      if ([1, 2, SCAN_VERSION].includes(saved?.version) && Array.isArray(saved.markets) && saved.markets.length === 4
+      if ([1, 2, 3, SCAN_VERSION].includes(saved?.version) && Array.isArray(saved.markets) && saved.markets.length === 4
         && saved.markets.every(m => Object.hasOwn(SCAN_MARKETS, m.key) && Array.isArray(m.rows))) {
         state = saved;
         if (state.status === 'running') state.status = 'interrupted';
@@ -92,7 +93,7 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
     }).catch(error => { state = { status: 'restore-error', persistenceError: error.message, markets: [] }; });
     await restore;
   }
-  async function run(job, previous, needsLineBreak) {
+  async function run(job, previous, requiredIndicator) {
     // Only two history requests at once, including the market reference histories.
     const activeMarkets = job.markets;
     let marketCursor = 0;
@@ -111,7 +112,8 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
           const saved = previous?.status === 'interrupted' && previous.markets.find(m => m.key === market.key);
           if (saved?.reference?.day.latest === market.reference.day.latest
             && saved.reference.day.previous === market.reference.day.previous) {
-            market.rows = saved.rows.filter(row => unique.has(row.symbol) && (!needsLineBreak || row.lineBreak));
+            market.rows = saved.rows.filter(row => unique.has(row.symbol)
+              && (requiredIndicator === 'line-break' ? row.lineBreak : ['cloud', 'cloud-candle'].includes(requiredIndicator) ? row.cloud : true));
           }
           market.completed = market.rows.length;
           market.phase = 'scanning';
@@ -141,18 +143,22 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
           normalizeDailyHistory(history);
           let data = analyzeMa200History(history, market.reference);
           let lineBreak = analyzeLineBreakHistory(history, market.reference);
+          let cloud = analyzeCloudHistory(history, market.reference);
           if (data.week.status === 'short-history') {
             if (market.weeklySourceError) {
               data.week = { status: 'error', error: market.weeklySourceError };
+              if (cloud.week.status === 'short-history') cloud.week = { status: 'error', error: market.weeklySourceError };
             } else {
               try {
                 const weekly = await loadWeeklyHistory(item.symbol, market.key, 300);
                 if (!Array.isArray(weekly) || !weekly.length) throw new Error('주봉 추가 조회 결과가 비어 있습니다.');
                 data = analyzeMa200History(history, market.reference, weekly);
                 lineBreak = analyzeLineBreakHistory(history, market.reference, weekly);
+                cloud = analyzeCloudHistory(history, market.reference, weekly);
                 market.weeklyFailuresInRow = 0;
               } catch (error) {
                 data.week = { status: 'error', error: `주봉 추가 조회 실패: ${error.message}` };
+                if (cloud.week.status === 'short-history') cloud.week = { status: 'error', error: `주봉 추가 조회 실패: ${error.message}` };
                 const systemic = /429|5\d\d|timeout|timed.?out|abort|fetch failed|network|ECONN|ENOTFOUND/i.test(error.message);
                 market.weeklyFailuresInRow = systemic ? (market.weeklyFailuresInRow || 0) + 1 : 0;
                 if (market.weeklyFailuresInRow >= 5) {
@@ -161,11 +167,11 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
               }
             }
           }
-          market.rows.push({ ...item, ...data, lineBreak, fetchedAt: isoNow() });
+          market.rows.push({ ...item, ...data, lineBreak, cloud, fetchedAt: isoNow() });
           market.failuresInRow = 0;
         } catch (error) {
           const failed = { status: 'error', error: error.message };
-          market.rows.push({ ...item, day: failed, week: failed, lineBreak: { day: failed, week: failed } });
+          market.rows.push({ ...item, day: failed, week: failed, lineBreak: { day: failed, week: failed }, cloud: { day: failed, week: failed } });
           const systemic = /429|5\d\d|timeout|timed.?out|abort|fetch failed|network|ECONN|ENOTFOUND/i.test(error.message);
           market.failuresInRow = systemic ? (market.failuresInRow || 0) + 1 : 0;
           if (market.failuresInRow >= 5) {
@@ -188,15 +194,16 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
     await restoreOnce();
     if (runner) return;
     const needsLineBreak = indicator === 'line-break' && state?.markets.some(m => m.rows.some(row => !row.lineBreak));
-    if (!force && !needsLineBreak && ['done', 'partial'].includes(state?.status) && now() - Date.parse(state.completedAt) < CACHE_MS) return;
-    // Old checkpoints contain MA signals, but not closes to reconstruct line
-    // break. Recheck only missing rows on the first request for the new menu.
-    const previous = needsLineBreak ? { ...state, status: 'interrupted' } : state;
+    const needsCloud = ['cloud', 'cloud-candle'].includes(indicator) && state?.markets.some(m => m.rows.some(row => !row.cloud));
+    if (!force && !needsLineBreak && !needsCloud && ['done', 'partial'].includes(state?.status) && now() - Date.parse(state.completedAt) < CACHE_MS) return;
+    // Old checkpoints do not retain the history needed for missing indicators.
+    // Recheck only incomplete rows when a new menu first requests them.
+    const previous = needsLineBreak || needsCloud ? { ...state, status: 'interrupted' } : state;
     state = { version: SCAN_VERSION, status: 'running', startedAt: isoNow(), updatedAt: isoNow(),
       persistenceError: previous?.persistenceError || '', markets: Object.keys(SCAN_MARKETS).map(key => ({
         key, phase: 'loading', total: 0, completed: 0, items: [], rows: [], error: '',
       })) };
-    runner = run(state, force ? null : previous, needsLineBreak).catch(error => {
+    runner = run(state, force ? null : previous, indicator).catch(error => {
       state.status = 'partial';
       state.error = error.message;
     }).finally(() => { runner = null; });
@@ -205,18 +212,20 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
     await restoreOnce();
     if (!state) return { status: 'idle', markets: [] };
     const lineBreak = indicator === 'line-break';
-    const pending = lineBreak && state.markets.some(m => m.rows.some(row => !row.lineBreak));
-    const weeklyIncomplete = !lineBreak && interval === 'week' && state.markets.some(m => m.weeklySourceError);
+    const cloud = ['cloud', 'cloud-candle'].includes(indicator);
+    const pending = (lineBreak || cloud) && state.markets.some(m => m.rows.some(row => !(cloud ? row.cloud : row.lineBreak)));
+    const weeklyIncomplete = !lineBreak && !cloud && interval === 'week' && state.markets.some(m => m.weeklySourceError);
     return { indicator, status: pending && ['done', 'partial'].includes(state.status) ? 'interrupted'
       : state.status === 'done' && weeklyIncomplete ? 'partial' : state.status, startedAt: state.startedAt, updatedAt: state.updatedAt,
       completedAt: state.completedAt, error: state.error, persistenceError: state.persistenceError,
       stale: now() - Date.parse(state.updatedAt) >= CACHE_MS,
       markets: state.markets.map(m => {
-        const sourceRows = lineBreak ? m.rows.filter(row => row.lineBreak) : m.rows;
-        const checked = sourceRows.map(row => ({ symbol: row.symbol, name: row.name, ...(lineBreak ? row.lineBreak[interval] : row[interval]) }));
+        const sourceRows = cloud ? m.rows.filter(row => row.cloud) : lineBreak ? m.rows.filter(row => row.lineBreak) : m.rows;
+        const checked = sourceRows.map(row => ({ symbol: row.symbol, name: row.name,
+          ...(cloud ? cloudResultForTarget(row.cloud[interval], indicator === 'cloud-candle' ? 'candle' : 'ma20') : lineBreak ? row.lineBreak[interval] : row[interval]) }));
         const excluded = checked.filter(row => row.status !== 'ready');
-        return { key: m.key, label: SCAN_MARKETS[m.key].label, phase: !lineBreak && interval === 'week' && m.weeklySourceError ? 'error' : m.phase,
-          error: m.error || (!lineBreak && interval === 'week' ? m.weeklySourceError : ''),
+        return { key: m.key, label: SCAN_MARKETS[m.key].label, phase: !lineBreak && !cloud && interval === 'week' && m.weeklySourceError ? 'error' : m.phase,
+          error: m.error || (!lineBreak && !cloud && interval === 'week' ? m.weeklySourceError : ''),
           total: m.total, completed: sourceRows.length, valid: checked.length - excluded.length,
           reference: m.reference, source: m.source, sourceDate: m.sourceDate,
           results: checked.filter(row => row.status === 'ready' && row.signal),

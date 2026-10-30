@@ -5,19 +5,24 @@ import StockChartDialog from './StockChartDialog';
 import ScanResultRow from './ScanResultRow';
 import { downloadScanXlsx, readScanExportColors } from '../utils/scanExport';
 
-const excludedReason = (row, interval, lineBreak) => row.status === 'short-history'
+const excludedReason = (row, interval, lineBreak, cloud) => row.status === 'short-history'
   ? lineBreak ? `전환선 부족 (${row.availableLines || 0}/3선 · ${row.available}개 ${interval === 'week' ? '주봉' : '일봉'})`
+    : cloud ? `${interval === 'week' ? '주봉' : '일봉'} 구름 자료 부족 (${row.available}/${row.required || 79})`
     : `${interval === 'week' ? '주봉' : '일봉'} 자료 부족 (${row.available}/201)${row.supplemented ? ' · 주봉 추가 조회 후에도 부족' : ''}`
   : row.status === 'stale' ? `최근 거래일 불일치 (${row.latestDate || '자료 없음'})` : row.error || '조회 실패';
 
 export default function Ma200Scanner({ showBollinger = false, globalWeekly = false, indicator = 'ma200' }) {
   const lineBreak = indicator === 'line-break';
-  const title = lineBreak ? '삼선전환도 양전환/음전환' : '200이평 돌파/붕괴';
-  const endpoint = lineBreak ? 'line-break-scan' : 'ma200-scan';
+  const cloud = indicator === 'cloud';
+  const [cloudTarget, setCloudTarget] = useState('ma20');
+  const candleCloud = cloudTarget === 'candle';
+  const basis = candleCloud ? '종가' : '20이평';
+  const title = cloud ? `구름돌파 · ${candleCloud ? '캔들봉(종가)' : '20이평'} 돌파/하락` : lineBreak ? '삼선전환도 양전환/음전환' : '200이평 돌파/붕괴';
+  const endpoint = cloud ? 'cloud-scan' : lineBreak ? 'line-break-scan' : 'ma200-scan';
   const upSignal = lineBreak ? 'bullish' : 'breakout';
   const downSignal = lineBreak ? 'bearish' : 'breakdown';
   const upLabel = lineBreak ? '양전환' : '돌파';
-  const downLabel = lineBreak ? '음전환' : '붕괴';
+  const downLabel = cloud ? '하락' : lineBreak ? '음전환' : '붕괴';
   const [interval, setInterval] = useState('day');
   const [direction, setDirection] = useState('all');
   const [marketFilter, setMarketFilter] = useState('all');
@@ -41,7 +46,7 @@ export default function Ma200Scanner({ showBollinger = false, globalWeekly = fal
       if (force) consumedRefresh.current = refresh;
       // Repeating start is idempotent: recover an initial connection failure or
       // a server restart without ever launching a duplicate background scan.
-      const url = apiUrl(`/${endpoint}?interval=${interval}${!force ? '&start=1' : ''}`);
+      const url = apiUrl(`/${endpoint}?interval=${interval}${cloud ? `&target=${cloudTarget}` : ''}${!force ? '&start=1' : ''}`);
       first = false;
       try {
         const response = await fetch(url, { method: force ? 'POST' : 'GET', signal: controller.signal,
@@ -49,8 +54,11 @@ export default function Ma200Scanner({ showBollinger = false, globalWeekly = fal
         const data = await response.json();
         if (!response.ok) throw new Error(data?.error || '종목 검색 조회 실패');
         if (!Array.isArray(data.markets)) throw new Error('검색 응답 형식이 잘못되었습니다.');
+        if (cloud && data.indicator !== (cloudTarget === 'candle' ? 'cloud-candle' : 'cloud')) {
+          throw new Error('구름 검색 API 버전이 맞지 않습니다. 프런트엔드와 API 서버를 함께 업데이트하세요.');
+        }
         if (stopped) return;
-        setRecord({ interval, data });
+        setRecord({ interval, target: cloudTarget, data });
         setError('');
         if (data.status === 'running' || data.status === 'interrupted') timer = setTimeout(update, 15000);
       } catch (failure) {
@@ -62,9 +70,9 @@ export default function Ma200Scanner({ showBollinger = false, globalWeekly = fal
     }
     void update();
     return () => { stopped = true; controller.abort(); clearTimeout(timer); };
-  }, [interval, refresh, endpoint]);
+  }, [interval, refresh, endpoint, cloud, cloudTarget]);
 
-  const data = record?.interval === interval ? record.data : null;
+  const data = record?.interval === interval && (!cloud || record.target === cloudTarget) ? record.data : null;
   const markets = data?.markets || [];
   const running = ['running', 'interrupted'].includes(data?.status);
   const rows = markets.filter(m => marketFilter === 'all' || m.key === marketFilter).flatMap(m =>
@@ -87,11 +95,14 @@ export default function Ma200Scanner({ showBollinger = false, globalWeekly = fal
   return <main className="ma200-scanner">
     <div className="scan-toolbar">
       <h1>{title}</h1>
+      {cloud && <select aria-label="구름돌파 검색 기준" value={cloudTarget} onChange={changeFilter(setCloudTarget)}>
+        <option value="ma20">20이평</option><option value="candle">캔들봉(종가)</option>
+      </select>}
       <div className="scan-timeframes" aria-label="검색 봉 단위">
         <button type="button" aria-pressed={interval === 'day'} onClick={() => { setInterval('day'); setPage(1); }}>일</button>
         <button type="button" aria-pressed={interval === 'week'} onClick={() => { setInterval('week'); setPage(1); }}>주</button>
       </div>
-      <select aria-label={lineBreak ? '양전환 음전환 필터' : '돌파 붕괴 필터'} value={direction} onChange={changeFilter(setDirection)}>
+      <select aria-label={cloud ? '구름 돌파 하락 필터' : lineBreak ? '양전환 음전환 필터' : '돌파 붕괴 필터'} value={direction} onChange={changeFilter(setDirection)}>
         <option value="all">{upLabel} + {downLabel}</option><option value={upSignal}>{upLabel}</option><option value={downSignal}>{downLabel}</option>
       </select>
       <select aria-label="검색 시장 필터" value={marketFilter} onChange={changeFilter(setMarketFilter)}>
@@ -100,21 +111,24 @@ export default function Ma200Scanner({ showBollinger = false, globalWeekly = fal
       </select>
       <input aria-label="검색 결과 종목명 또는 코드" placeholder="종목명 / 코드" value={search} onChange={changeFilter(setSearch)} />
       <button type="button" onClick={() => setRefresh(value => value + 1)} disabled={running}>새로 검색</button>
-      <button type="button" onClick={saveExcel} disabled={!data} title="현재 필터의 모든 페이지 결과를 이 기기에 다운로드합니다. 서버에 엑셀 파일을 저장하지 않습니다.">엑셀 저장</button>
+      {!cloud && <button type="button" onClick={saveExcel} disabled={!data} title="현재 필터의 모든 페이지 결과를 이 기기에 다운로드합니다. 서버에 엑셀 파일을 저장하지 않습니다.">엑셀 저장</button>}
     </div>
-    <p className="scan-description">엑셀 저장: 현재 필터의 모든 페이지 결과와 검색 요약을 접속한 기기에 다운로드합니다. 서버에는 엑셀 파일을 저장하지 않습니다. 검색 중에는 현재까지의 결과를 저장합니다.</p>
+    {!cloud && <p className="scan-description">엑셀 저장: 현재 필터의 모든 페이지 결과와 검색 요약을 접속한 기기에 다운로드합니다. 서버에는 엑셀 파일을 저장하지 않습니다. 검색 중에는 현재까지의 결과를 저장합니다.</p>}
     {exportError && <p role="alert" className="scan-error">{exportError}</p>}
     <p className="scan-description">
-      {lineBreak ? `${interval === 'day' ? '일봉 종가' : '주봉 마지막 종가'}로 삼선전환도를 만들고, ${interval === 'day' ? '최근 거래일' : '최근 주봉'}에서 새로 양전환·음전환한 종목을 찾습니다.`
+      {cloud ? `${interval === 'day' ? '이전 거래일 → 최근 거래일' : '지난주 마지막 거래일 → 현재 진행 중인 이번 주봉'}의 ${candleCloud ? '캔들 종가' : '종가 20이평'}를 각 봉에 표시되는 일목 구름과 비교합니다.`
+        : lineBreak ? `${interval === 'day' ? '일봉 종가' : '주봉 마지막 종가'}로 삼선전환도를 만들고, ${interval === 'day' ? '최근 거래일' : '최근 주봉'}에서 새로 양전환·음전환한 종목을 찾습니다.`
         : interval === 'day' ? '최근 두 실제 거래일의 종가와 각 날짜의 200일 단순이평을 비교합니다.'
         : '최근 두 주봉의 마지막 종가와 각 주의 200주 단순이평을 비교합니다. 최근 주봉은 진행 중일 수 있습니다.'}
-      {lineBreak ? ' 음선 상태에서 최근 전환선 3개의 최고가를 초과하면 양전환, 양선 상태에서 최저가 미만이면 음전환입니다. 기준가와 같거나 기존 방향을 유지하면 제외합니다.'
+      {cloud ? ` 이전 ${basis}가 구름 하단~상단 안(경계 포함)에 있고 최근 ${basis}가 최근 구름 상단을 초과하면 돌파, 하단 미만이면 하락입니다. 구름 경계와 같은 값은 아직 구름 안으로 봅니다. 양운·음운 모두 검색하며 이미 밖에 있던 종목은 제외합니다.${candleCloud ? ' 꼬리의 고가/저가 접촉만으로는 신호를 만들지 않습니다.' : ''}`
+        : lineBreak ? ' 음선 상태에서 최근 전환선 3개의 최고가를 초과하면 양전환, 양선 상태에서 최저가 미만이면 음전환입니다. 기준가와 같거나 기존 방향을 유지하면 제외합니다.'
         : ' 돌파: 이전 ≤ 이평, 최근 ≥ 이평. 붕괴: 이전 ≥ 이평, 최근 ≤ 이평. 두 기간 모두 이평과 같으면 제외합니다.'}
       {' '}장중 종가는 조회 시점의 값이며 신호가 바뀔 수 있습니다.
     </p>
+    {cloud && <p className="scan-description">기존 일목 차트와 같은 9·26·52 / 26봉 선행 설정입니다. 미래에 그릴 구름이 아닌 해당 봉에 표시되는 구름을 사용합니다. 실제 고가·저가로 계산하며 최소 79개 봉이 필요합니다. 주봉의 고가·저가는 한 주 전체를 집계합니다. 최근 주봉은 진행 중으로 신호가 바뀔 수 있습니다. 6·7·8번은 검색 작업을 공유합니다.</p>}
     {lineBreak && <p className="scan-description">최근 캔들 3개가 아닌 실제 생성된 전환선 3개를 비교합니다. 확보된 일봉 최대 1,250개와 주봉 자료로 계산하며, 전환선이 충분하지 않으면 제외합니다. 최근 주봉은 진행 중일 수 있습니다. 6번·7번은 같은 백그라운드 검색을 공유합니다.</p>}
     <p className="scan-description">KOSPI·KOSDAQ 전체 주식, NASDAQ 상장주식(ETF·테스트·워런트·유닛·권리·채권 제외), 도쿄 Prime·Standard·Growth 주식. 일본 목록은 JPX의 최근 월말 자료 기준입니다.</p>
-    {!lineBreak && interval === 'week' && <p className="scan-description">주봉이 201개 미만이면 주봉 자료를 추가 조회합니다. 상장 기간이 짧거나 제공 자료가 여전히 부족한 종목은 200주 이평을 정확히 계산할 수 없어 제외합니다.</p>}
+    {!lineBreak && !cloud && interval === 'week' && <p className="scan-description">주봉이 201개 미만이면 주봉 자료를 추가 조회합니다. 상장 기간이 짧거나 제공 자료가 여전히 부족한 종목은 200주 이평을 정확히 계산할 수 없어 제외합니다.</p>}
     {error && <p role="alert" className="scan-error">{error}</p>}
     {data?.persistenceError && <p role="alert" className="scan-error">검색 진행 저장 오류: {data.persistenceError}</p>}
     {data?.error && <p role="alert" className="scan-error">{data.error}</p>}
@@ -138,7 +152,7 @@ export default function Ma200Scanner({ showBollinger = false, globalWeekly = fal
           {info?.excludedCount > 0 && <details>
             <summary>제외 사유 ({info.excludedCount}종목)</summary>
             <p>{lineBreak ? '전환선 부족' : '이력 부족'} {info.exclusionCounts['short-history']} · 날짜 불일치 {info.exclusionCounts.stale} · 조회 실패 {info.exclusionCounts.error}</p>
-            {info.excluded.slice(0, 100).map(row => <p key={row.symbol}>{row.name} ({row.symbol}): {excludedReason(row, interval, lineBreak)}</p>)}
+            {info.excluded.slice(0, 100).map(row => <p key={row.symbol}>{row.name} ({row.symbol}): {excludedReason(row, interval, lineBreak, cloud)}</p>)}
             {info.excludedCount > 100 && <p>제외 상세는 처음 100종목까지 표시합니다.</p>}
           </details>}
         </section>;
@@ -147,12 +161,15 @@ export default function Ma200Scanner({ showBollinger = false, globalWeekly = fal
     <div className="scan-result-caption">조건에 맞는 종목 {matches.length}개
       {pages > 1 && <span><button type="button" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>이전</button> {currentPage}/{pages} <button type="button" disabled={currentPage === pages} onClick={() => setPage(currentPage + 1)}>다음</button></span>}
     </div>
-    <div className="scan-table-wrap" role="region" aria-label={lineBreak ? '삼선전환도 검색 결과 표' : '200이평 검색 결과 표'} tabIndex={0}><table ref={tableRef} className="scan-table">
-      <colgroup><col className="scan-stock-col" /><col className="scan-market-col" /><col className="scan-signal-col" /><col className="scan-date-col" /><col span={5} className="scan-price-col" /><col className="scan-record-col" /><col className="stock-financial-col" /></colgroup>
+    <div className="scan-table-wrap" role="region" aria-label={cloud ? '구름돌파 검색 결과 표' : lineBreak ? '삼선전환도 검색 결과 표' : '200이평 검색 결과 표'} tabIndex={0}><table ref={tableRef} className={`scan-table${cloud ? ' cloud-scan-table' : ''}`}>
+      <colgroup><col className="scan-stock-col" /><col className="scan-market-col" /><col className="scan-signal-col" /><col className="scan-date-col" />
+        {cloud ? <><col className="scan-price-col" /><col className="cloud-range-col" /><col className="scan-price-col" /><col className="cloud-range-col" /><col className="scan-price-col" /></> : <col span={5} className="scan-price-col" />}
+        <col className="scan-record-col" /><col className="stock-financial-col" /></colgroup>
       <thead><tr><th scope="col" className="scan-stock-cell">종목</th><th scope="col">시장 / 통화</th><th scope="col">구분</th><th scope="col">최근 비교일</th>
-        {lineBreak ? <><th scope="col">이전 종가</th><th scope="col">최근 종가</th><th scope="col">이전 방향</th><th scope="col">전환 기준가</th><th scope="col">기준가 대비</th></>
+        {cloud ? <><th scope="col">이전 {basis}</th><th scope="col">이전 구름 하단~상단</th><th scope="col">최근 {basis}</th><th scope="col">최근 구름 하단~상단</th><th scope="col">경계 대비</th></>
+          : lineBreak ? <><th scope="col">이전 종가</th><th scope="col">최근 종가</th><th scope="col">이전 방향</th><th scope="col">전환 기준가</th><th scope="col">기준가 대비</th></>
           : <><th scope="col">이전 종가</th><th scope="col">이전 200이평</th><th scope="col">최근 종가</th><th scope="col">최근 200이평</th><th scope="col">최근 괴리율</th></>}<th scope="col">롱·숏 / 준비! / 주의!</th><th scope="col">재무정보</th></tr></thead>
-      <tbody>{visible.map(row => <ScanResultRow key={`${row.market}-${row.symbol}`} row={row} lineBreak={lineBreak}
+      <tbody>{visible.map(row => <ScanResultRow key={`${row.market}-${row.symbol}`} row={row} lineBreak={lineBreak} cloud={cloud} cloudTarget={cloudTarget}
         upSignal={upSignal} upLabel={upLabel} downLabel={downLabel} interval={interval} onOpen={setSelectedStock} />)}</tbody>
     </table></div>
     {matches.length === 0 && <p className="scan-empty">{!data || running ? '검색이 진행되면 조건에 맞는 종목을 이곳에 표시합니다.'

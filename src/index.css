@@ -680,6 +680,8 @@ html, body {
 .fundamentals-metric b { color: var(--text); font-weight: 600; }
 
 .scan-price-col { width: 105px; }
+.cloud-range-col { width: 170px; }
+.ma200-scanner .scan-table.cloud-scan-table { min-width: 2240px; width: max(100%, 2240px); }
 .saved-record-col { width: 140px; }
 .scan-record-col { width: 265px; }
 .stock-financial-col { width: 820px; }

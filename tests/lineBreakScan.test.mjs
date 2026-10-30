@@ -134,7 +134,7 @@ test('MA200 and line break, both timeframes and multiple browsers share one boun
   await restored.start(false, 'line-break');
   assert.equal((await restored.snapshot('week', 'line-break')).status, 'done');
   assert.equal(deps.stats().calls, 16);
-  assert.equal(saved.version, 3);
+  assert.equal(saved.version, 4);
 });
 
 test('old checkpoints stay usable for MA200 and lazily backfill only missing line-break rows once', async () => {
