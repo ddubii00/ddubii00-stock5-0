@@ -6,7 +6,7 @@ async page => {
   const menu = page.getByLabel('차트 그룹 선택');
   await menu.waitFor();
   const options = await menu.locator('option').allTextContents();
-  check(options.includes('8. 구름돌파') && options.includes('9. 종목들') && !options.includes('8. 종목들'), 'menu numbering');
+  check(options.includes('8. 구름돌파') && options.includes('9. 골든/데드 크로스') && options.includes('10. 공통항목') && options.includes('11. 종목들'), 'menu numbering');
   await menu.selectOption('cloud');
   check(await page.getByLabel('구름돌파 검색 기준').inputValue() === 'candle', 'cloud opens on close-price criteria, never SMA20');
   await page.getByLabel('구름돌파 검색 기준').selectOption('ma20');

@@ -15,6 +15,8 @@ import fundamentalsHandler from '../api/fundamentals.js';
 import ma200ScanHandler from '../api/ma200-scan.js';
 import lineBreakScanHandler from '../api/line-break-scan.js';
 import cloudScanHandler from '../api/cloud-scan.js';
+import maCrossScanHandler from '../api/ma-cross-scan.js';
+import commonScanHandler from '../api/common-scan.js';
 import { fetchKoreanWeeklyOhlcv } from '../api/_koreanWeekly.js';
 
 dotenv.config({ path: '.env.local', quiet: true });
@@ -59,6 +61,8 @@ app.get('/api/fundamentals', fundamentalsHandler);
 app.all('/api/ma200-scan', ma200ScanHandler);
 app.all('/api/line-break-scan', lineBreakScanHandler);
 app.all('/api/cloud-scan', cloudScanHandler);
+app.all('/api/ma-cross-scan', maCrossScanHandler);
+app.all('/api/common-scan', commonScanHandler);
 
 let krxCache = { loadedAt: 0, items: [] };
 const ohlcvCache = new Map();

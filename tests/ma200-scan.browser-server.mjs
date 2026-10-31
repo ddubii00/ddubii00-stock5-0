@@ -5,6 +5,8 @@ import { createMa200Scanner } from '../api/_ma200Scanner.js';
 import { createScanHandler } from '../api/ma200-scan.js';
 import { weeklyCloses } from '../src/utils/ma200Scan.js';
 import { createCloudScanHandler } from '../api/cloud-scan.js';
+import { createMaCrossScanHandler } from '../api/ma-cross-scan.js';
+import { createCommonScanHandler } from '../api/common-scan.js';
 
 const date = new Date('2026-10-08T00:00:00Z');
 const bars = [];
@@ -45,6 +47,12 @@ const scanner = createMa200Scanner({
       if (symbol.endsWith('29')) return rows.slice(-150);
       if (symbol.endsWith('28')) return rows.slice(0, -1);
       const up = Number(symbol.match(/\d+$/)?.[0]) % 2 === 0;
+      if (/(26|27)$/.test(symbol)) {
+        // Known simultaneous daily/weekly line-break, cloud and all MA crosses.
+        rows.slice(0, 4).forEach((row, i) => { row.close = up ? 100 - i : 100 + i; });
+        rows.at(-1).close = up ? 200 : 50;
+        return withCloudRanges(rows);
+      }
       for (const row of rows) {
         const index = recentWeeks.indexOf(weeklyCloses([row])[0].time);
         if (index >= 0) row.close = (up ? [90, 80, 70, 70] : [110, 120, 130, 130])[index];
@@ -61,4 +69,6 @@ app.all('/api/state', stateHandler);
 app.all('/api/ma200-scan', createScanHandler(scanner));
 app.all('/api/line-break-scan', createScanHandler(scanner, undefined, undefined, 'line-break'));
 app.all('/api/cloud-scan', createCloudScanHandler(scanner));
+app.all('/api/ma-cross-scan', createMaCrossScanHandler(scanner));
+app.all('/api/common-scan', createCommonScanHandler(scanner));
 app.listen(3001, '127.0.0.1', () => console.log('Isolated MA200 browser fixture listening on 3001'));

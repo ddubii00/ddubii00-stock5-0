@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ChartColumn from './components/ChartColumn';
 import SharedPositionAccess from './components/SharedPositionAccess';
 import Ma200Scanner from './components/Ma200Scanner';
@@ -9,6 +9,8 @@ import { GROUPS, INDEX_ITEMS } from './marketPresets';
 import { parseRankedGroup } from './utils/rankedGroups';
 import './index.css';
 import './stock5-0-overrides.css';
+
+const CommonScanner = lazy(() => import('./components/CommonScanner'));
 
 function formatFixed(value, digits = 2) {
   const n = Number(value);
@@ -416,7 +418,9 @@ function App() {
             <option value="ma200">6. 200이평 돌파/붕괴</option>
             <option value="line-break">7. 삼선전환도</option>
             <option value="cloud">8. 구름돌파</option>
-            <option value="saved-stocks">9. 종목들</option>
+            <option value="ma-cross">9. 골든/데드 크로스</option>
+            <option value="common">10. 공통항목</option>
+            <option value="saved-stocks">11. 종목들</option>
           </select>
         </div>
 
@@ -443,7 +447,7 @@ function App() {
         </button>
       </header>
 
-      {view === 'saved-stocks' ? <SavedStocks showBollinger={showBollinger} globalWeekly={globalWeekly} /> : ['ma200', 'line-break', 'cloud'].includes(view) ? <Ma200Scanner key={view} indicator={view} showBollinger={showBollinger} globalWeekly={globalWeekly} /> : <div className="dashboard-grid">
+      {view === 'saved-stocks' ? <SavedStocks showBollinger={showBollinger} globalWeekly={globalWeekly} /> : view === 'common' ? <Suspense fallback={<main className="ma200-scanner"><p role="status">공통항목 화면 준비 중...</p></main>}><CommonScanner showBollinger={showBollinger} /></Suspense> : ['ma200', 'line-break', 'cloud', 'ma-cross'].includes(view) ? <Ma200Scanner key={view} indicator={view} showBollinger={showBollinger} globalWeekly={globalWeekly} /> : <div className="dashboard-grid">
         {rankedView && rankedLoading[view] && selectedItems.length === 0 && (
           <div className="top100-status" role="status">전일 시가총액 순위 불러오는 중...</div>
         )}

@@ -744,6 +744,14 @@ html, body {
 .scan-table th { position: sticky; top: 0; z-index: 2; background: var(--panel2); font-weight: 600; }
 .scan-table .scan-stock-cell { position: sticky; left: 0; z-index: 1; background: var(--panel); box-shadow: 1px 0 var(--border); }
 .scan-table th.scan-stock-cell { z-index: 3; background: var(--panel2); }
+.common-conditions { display: grid; gap: 8px; margin: 12px 0; }
+.common-condition { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; margin: 0; padding: 8px 12px 12px; border: 1px solid var(--border); border-radius: 6px; }
+.common-condition legend { padding: 0 5px; color: var(--muted); font-size: 12px; }
+.common-condition select, .common-condition button { max-width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel); color: var(--text); font: inherit; }
+.common-condition button:disabled { opacity: .45; cursor: default; }
+.scan-table.common-scan-table { min-width: 1640px; width: max(100%, 1640px); }
+.common-match-col { width: 350px; }
+.common-match-cell > div { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; padding: 2px 0; }
 .scan-stock-cell small { max-width: 15em; overflow: hidden; text-overflow: ellipsis; }
 .scan-table th:nth-child(-n+4), .scan-table td:nth-child(-n+4) { text-align: left; }
 .scan-table small { display: block; color: var(--muted); font-size: 10px; }

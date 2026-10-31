@@ -3,11 +3,21 @@ import { loadScanUniverse } from './_scanUniverse.js';
 import { SCAN_MARKETS, analyzeMa200History, normalizeDailyHistory, scanReference } from '../src/utils/ma200Scan.js';
 import { analyzeLineBreakHistory } from '../src/utils/lineBreakScan.js';
 import { analyzeCloudHistory, cloudResultForTarget } from '../src/utils/cloudScan.js';
+import { analyzeMaCrossHistory } from '../src/utils/maCrossScan.js';
+import { conditionIndicator, intersectScanSnapshots } from '../src/utils/commonScan.js';
 
 const yahoo = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 const HISTORY_LIMIT = 1250; // Enough daily closes for 201 weekly bars, including holidays.
-const SCAN_VERSION = 5;
+const SCAN_VERSION = 6;
 const CACHE_MS = 15 * 60 * 1000;
+
+function hasIndicator(row, indicator) {
+  if (indicator === 'common') return row.lineBreak && row.cloud && row.maCross;
+  if (indicator.startsWith('ma-cross-')) return row.maCross;
+  if (indicator === 'line-break') return row.lineBreak;
+  if (['cloud', 'cloud-candle'].includes(indicator)) return row.cloud;
+  return true;
+}
 
 export async function fetchScanHistory(symbol, market, limit = HISTORY_LIMIT) {
   const signal = AbortSignal.timeout(20000);
@@ -76,7 +86,7 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
   };
   async function restoreOnce() {
     if (!restore) restore = Promise.resolve().then(readCheckpoint).then(saved => {
-      if ([1, 2, 3, 4, SCAN_VERSION].includes(saved?.version) && Array.isArray(saved.markets) && saved.markets.length === 4
+      if ([1, 2, 3, 4, 5, SCAN_VERSION].includes(saved?.version) && Array.isArray(saved.markets) && saved.markets.length === 4
         && saved.markets.every(m => Object.hasOwn(SCAN_MARKETS, m.key) && Array.isArray(m.rows))) {
         state = saved;
         if (state.status === 'running') state.status = 'interrupted';
@@ -121,7 +131,7 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
           if (saved?.reference?.day.latest === market.reference.day.latest
             && saved.reference.day.previous === market.reference.day.previous) {
             market.rows = saved.rows.filter(row => unique.has(row.symbol)
-              && (requiredIndicator === 'line-break' ? row.lineBreak : ['cloud', 'cloud-candle'].includes(requiredIndicator) ? row.cloud : true));
+              && hasIndicator(row, requiredIndicator));
           }
           market.completed = market.rows.length;
           market.phase = 'scanning';
@@ -152,8 +162,11 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
           let data = analyzeMa200History(history, market.reference);
           let lineBreak = analyzeLineBreakHistory(history, market.reference);
           let cloud = analyzeCloudHistory(history, market.reference);
+          let maCross = analyzeMaCrossHistory(history, market.reference);
+          let weeklyFailure = '';
           if (data.week.status === 'short-history') {
             if (market.weeklySourceError) {
+              weeklyFailure = market.weeklySourceError;
               data.week = { status: 'error', error: market.weeklySourceError };
               if (cloud.week.status === 'short-history') cloud.week = { status: 'error', error: market.weeklySourceError };
             } else {
@@ -163,8 +176,10 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
                 data = analyzeMa200History(history, market.reference, weekly);
                 lineBreak = analyzeLineBreakHistory(history, market.reference, weekly);
                 cloud = analyzeCloudHistory(history, market.reference, weekly);
+                maCross = analyzeMaCrossHistory(history, market.reference, weekly);
                 market.weeklyFailuresInRow = 0;
               } catch (error) {
+                weeklyFailure = `주봉 추가 조회 실패: ${error.message}`;
                 data.week = { status: 'error', error: `주봉 추가 조회 실패: ${error.message}` };
                 if (cloud.week.status === 'short-history') cloud.week = { status: 'error', error: `주봉 추가 조회 실패: ${error.message}` };
                 const systemic = /429|5\d\d|timeout|timed.?out|abort|fetch failed|network|ECONN|ENOTFOUND/i.test(error.message);
@@ -175,11 +190,16 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
               }
             }
           }
-          market.rows.push({ ...item, ...data, lineBreak, cloud, fetchedAt: isoNow() });
+          if (weeklyFailure) for (const pair of Object.keys(maCross.week)) {
+            if (maCross.week[pair].status === 'short-history') maCross.week[pair] = { ...maCross.week[pair], status: 'error', error: weeklyFailure };
+          }
+          market.rows.push({ ...item, ...data, lineBreak, cloud, maCross, fetchedAt: isoNow() });
           market.failuresInRow = 0;
         } catch (error) {
           const failed = { status: 'error', error: error.message };
-          market.rows.push({ ...item, day: failed, week: failed, lineBreak: { day: failed, week: failed }, cloud: { day: failed, week: failed } });
+          const failedPairs = Object.fromEntries(['5-20', '5-60', '20-60'].map(pair => [pair, failed]));
+          market.rows.push({ ...item, day: failed, week: failed, lineBreak: { day: failed, week: failed }, cloud: { day: failed, week: failed },
+            maCross: { day: failedPairs, week: failedPairs } });
           const systemic = /429|5\d\d|timeout|timed.?out|abort|fetch failed|network|ECONN|ENOTFOUND/i.test(error.message);
           market.failuresInRow = systemic ? (market.failuresInRow || 0) + 1 : 0;
           if (market.failuresInRow >= 5) {
@@ -201,12 +221,11 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
   async function start(force = false, indicator = 'ma200') {
     await restoreOnce();
     if (runner) return;
-    const needsLineBreak = indicator === 'line-break' && state?.markets.some(m => m.rows.some(row => !row.lineBreak));
-    const needsCloud = ['cloud', 'cloud-candle'].includes(indicator) && state?.markets.some(m => m.rows.some(row => !row.cloud));
-    if (!force && !needsLineBreak && !needsCloud && ['done', 'partial'].includes(state?.status) && now() - Date.parse(state.completedAt) < CACHE_MS) return;
+    const needsIndicator = state?.markets.some(m => m.rows.some(row => !hasIndicator(row, indicator)));
+    if (!force && !needsIndicator && ['done', 'partial'].includes(state?.status) && now() - Date.parse(state.completedAt) < CACHE_MS) return;
     // Old checkpoints do not retain the history needed for missing indicators.
     // Recheck only incomplete rows when a new menu first requests them.
-    const previous = needsLineBreak || needsCloud ? { ...state, status: 'interrupted' } : state;
+    const previous = needsIndicator ? { ...state, status: 'interrupted' } : state;
     state = { version: SCAN_VERSION, status: 'running', startedAt: isoNow(), updatedAt: isoNow(),
       persistenceError: previous?.persistenceError || '', markets: Object.keys(SCAN_MARKETS).map(key => ({
         key, phase: 'loading', total: 0, completed: 0, items: [], rows: [], error: '',
@@ -216,24 +235,26 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
       state.error = error.message;
     }).finally(() => { runner = null; });
   }
-  async function snapshot(interval = 'day', indicator = 'ma200') {
-    await restoreOnce();
+  function snapshotNow(interval = 'day', indicator = 'ma200') {
     if (!state) return { status: 'idle', markets: [] };
     const lineBreak = indicator === 'line-break';
     const cloud = ['cloud', 'cloud-candle'].includes(indicator);
-    const pending = (lineBreak || cloud) && state.markets.some(m => m.rows.some(row => !(cloud ? row.cloud : row.lineBreak)));
-    const weeklyIncomplete = !lineBreak && !cloud && interval === 'week' && state.markets.some(m => m.weeklySourceError);
+    const cross = indicator.startsWith('ma-cross-');
+    const pair = cross ? indicator.slice('ma-cross-'.length) : null;
+    const pending = state.markets.some(m => m.rows.some(row => !hasIndicator(row, indicator)));
+    const weeklyIncomplete = !lineBreak && !cloud && !cross && interval === 'week' && state.markets.some(m => m.weeklySourceError);
     return { indicator, status: pending && ['done', 'partial'].includes(state.status) ? 'interrupted'
       : state.status === 'done' && weeklyIncomplete ? 'partial' : state.status, startedAt: state.startedAt, updatedAt: state.updatedAt,
       completedAt: state.completedAt, error: state.error, persistenceError: state.persistenceError,
       stale: now() - Date.parse(state.updatedAt) >= CACHE_MS,
       markets: state.markets.map(m => {
-        const sourceRows = cloud ? m.rows.filter(row => row.cloud) : lineBreak ? m.rows.filter(row => row.lineBreak) : m.rows;
+        const sourceRows = m.rows.filter(row => hasIndicator(row, indicator));
         const checked = sourceRows.map(row => ({ symbol: row.symbol, name: row.name,
-          ...(cloud ? cloudResultForTarget(row.cloud[interval], indicator === 'cloud-candle' ? 'candle' : 'ma20') : lineBreak ? row.lineBreak[interval] : row[interval]) }));
+          ...(cloud ? cloudResultForTarget(row.cloud[interval], indicator === 'cloud-candle' ? 'candle' : 'ma20')
+            : cross ? row.maCross[interval][pair] : lineBreak ? row.lineBreak[interval] : row[interval]) }));
         const excluded = checked.filter(row => row.status !== 'ready');
-        return { key: m.key, label: SCAN_MARKETS[m.key].label, phase: !lineBreak && !cloud && interval === 'week' && m.weeklySourceError ? 'error' : m.phase,
-          error: m.error || (!lineBreak && !cloud && interval === 'week' ? m.weeklySourceError : ''),
+        return { key: m.key, label: SCAN_MARKETS[m.key].label, phase: !lineBreak && !cloud && !cross && interval === 'week' && m.weeklySourceError ? 'error' : m.phase,
+          error: m.error || (!lineBreak && !cloud && !cross && interval === 'week' ? m.weeklySourceError : ''),
           total: m.total, completed: sourceRows.length, valid: checked.length - excluded.length,
           reference: m.reference, source: m.source, sourceDate: m.sourceDate,
           results: checked.filter(row => row.status === 'ready' && row.signal),
@@ -242,5 +263,18 @@ export function createMa200Scanner({ loadUniverse = loadScanUniverse, loadHistor
         };
       }) };
   }
-  return { start, snapshot, settled: async () => { await runner; await writes; } };
+  async function snapshot(interval = 'day', indicator = 'ma200') {
+    await restoreOnce();
+    return snapshotNow(interval, indicator);
+  }
+  async function snapshots(indicator = 'ma200') {
+    await restoreOnce();
+    // No await between the two reads: both timeframes describe the same job progress.
+    return { indicator, day: snapshotNow('day', indicator), week: snapshotNow('week', indicator) };
+  }
+  async function commonSnapshot(conditions) {
+    await restoreOnce();
+    return intersectScanSnapshots(conditions, conditions.map(condition => snapshotNow(condition.interval, conditionIndicator(condition))));
+  }
+  return { start, snapshot, snapshots, commonSnapshot, settled: async () => { await runner; await writes; } };
 }

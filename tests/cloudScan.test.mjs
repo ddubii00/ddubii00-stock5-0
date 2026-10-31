@@ -190,7 +190,7 @@ test('v4 overly strict cloud failures are lazily retried while valid results and
   assert.equal(calls - originalCalls, 8, 'four benchmarks plus four failed stocks only');
   assert.equal((await restored.snapshot('day', 'cloud-candle')).status, 'done');
   assert.ok((await restored.snapshot('day', 'cloud-candle')).markets.every(m => m.valid === 2));
-  assert.equal(saved.version, 5);
+  assert.equal(saved.version, 6);
 });
 
 test('minimum warmup, missing real high/low and stale actual trading dates remain explicit; future bars cannot affect the reference', () => {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { unzipSync, strFromU8 } from 'fflate';
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
-import { createScanExport, buildScanXlsx, downloadScanXlsx, readScanExportColors, SCAN_XLSX_MIME } from '../src/utils/scanExport.js';
+import { createScanExport, createCombinedScanExport, buildScanXlsx, downloadScanXlsx, readScanExportColors, SCAN_XLSX_MIME } from '../src/utils/scanExport.js';
 
 const row = { name: '삼성전자 전체 이름이 아주 길어도 잘리지 않습니다', symbol: '005930', market: 'kospi', marketLabel: 'KOSPI 전체', signal: 'breakout',
   previous: { date: '2026-10-07', close: 70000, ma200: 70001, direction: 'down' },
@@ -98,6 +98,11 @@ test('download only creates a local Blob/anchor with no fetch or filesystem writ
     assert.ok(clicked && removed && revoked);
     assert.equal(blob.type, SCAN_XLSX_MIME);
     assert.ok(unzipSync(new Uint8Array(await blob.arrayBuffer()))['xl/workbook.xml']);
+    const data = { ...options.data, markets: [{ ...market, results: [row] }] };
+    const combined = downloadScanXlsx({ ...options, indicator: 'line-break', datasets: { day: data, week: data } });
+    assert.match(combined, /일봉\+주봉/);
+    const bundle = unzipSync(new Uint8Array(await blob.arrayBuffer()));
+    assert.ok(bundle['xl/worksheets/sheet4.xml'], 'combined download uses only the same local Blob path');
   } finally {
     globalThis.document = originals.document; globalThis.fetch = originals.fetch;
     URL.createObjectURL = originals.create; URL.revokeObjectURL = originals.revoke; globalThis.setTimeout = originals.timer;
@@ -107,6 +112,58 @@ test('download only creates a local Blob/anchor with no fetch or filesystem writ
 test('no record or invalid saving time fails before downloading', () => {
   assert.throws(() => createScanExport({ matches: [] }), /자료/);
   assert.throws(() => createScanExport({ ...options, savedAt: 'invalid' }), /시각/);
+});
+
+test('combined line-break export has both timeframes and summaries, identical filters and every matching page', () => {
+  const make = (key, rows) => ({ ...options.data, markets: [{ ...market, key, results: rows }] });
+  const bullish = { ...row, signal: 'bullish' }, bearish = { ...row, signal: 'bearish' };
+  const model = createCombinedScanExport({ indicator: 'line-break', datasets: {
+    day: make('kospi', [...Array.from({ length: 112 }, () => bullish), bearish]),
+    week: make('kospi', [bullish, bearish]),
+  }, direction: 'bullish', marketFilter: 'kospi', search: '삼성', savedAt: options.savedAt });
+  assert.match(model.filename, /7_삼선_일봉\+주봉_kospi_양전환/);
+  assert.deepEqual(model.sheets.map(sheet => sheet.name), ['일봉 요약', '일봉 결과', '주봉 요약', '주봉 결과']);
+  const { sheet, files } = read(model);
+  assert.equal(sheet(2).sheetData.row.length, 113);
+  assert.equal(sheet(4).sheetData.row.length, 2);
+  assert.equal(sheet(2).autoFilter['@_ref'], 'A1:L113');
+  assert.match(strFromU8(files['xl/workbook.xml']), /주봉 결과/);
+  assert.ok(model.sheets[0].rows.some(row => row[0] === '봉 단위' && row[1] === '일봉'));
+  assert.ok(model.sheets[2].rows.some(row => row[0] === '봉 단위' && row[1] === '주봉'));
+  assert.equal(model.sheets[2].rows.find(row => row[0] === '저장 결과 수')[1], 1);
+  const unmatched = createCombinedScanExport({ indicator: 'line-break', datasets: { day: make('kospi', [bullish]), week: make('kosdaq', [bullish]) }, marketFilter: 'kospi', savedAt: options.savedAt });
+  assert.equal(unmatched.sheets[3].rows.length, 1, 'empty timeframe retained with a header and zero result summary');
+});
+
+test('cloud and cross exports carry their own targets/values/labels, with screen colours on the final percentage column', () => {
+  for (const target of ['candle', 'ma20']) {
+    const cloudRow = { ...row, signal: 'breakdown', previous: { ...row.previous, ma20: 64530, cloudLow: 64475, cloudHigh: 68800 },
+      latest: { ...row.latest, ma20: 62667.5, cloudLow: 64475, cloudHigh: 68800 }, distancePct: -2.8 };
+    const model = createScanExport({ ...options, indicator: 'cloud', cloudTarget: target, matches: [cloudRow] });
+    assert.match(model.filename, target === 'ma20' ? /8_구름_20이평/ : /8_구름_종가/);
+    assert.equal(model.results[1][4], '하락'); assert.equal(model.results[0].length, 14);
+    assert.equal(model.results[1][7], target === 'ma20' ? 64530 : row.previous.close);
+    assert.equal(model.results[1][10], target === 'ma20' ? 62667.5 : row.latest.close);
+    const { sheet, styles } = read(model), last = sheet(2).sheetData.row[1].c.at(-1);
+    const style = styles.cellXfs.xf[Number(last['@_s'])];
+    assert.equal(styles.fonts.font[Number(style['@_fontId'])].color['@_rgb'], 'FF1565C0');
+  }
+  const cross = createScanExport({ ...options, indicator: 'ma-cross', pair: '20-60', matches: [{ ...row,
+    previous: { ...row.previous, fastMA: 90, slowMA: 100 }, latest: { ...row.latest, fastMA: 110, slowMA: 101 } }] });
+  assert.equal(cross.results[1][4], '골든크로스'); assert.equal(cross.results[1][10], 101);
+  assert.match(cross.filename, /9_크로스_20-60/); read(cross);
+});
+
+test('combined export never silently omits a missing timeframe and discloses incomplete weekly data', () => {
+  assert.throws(() => createCombinedScanExport({ datasets: { day: options.data } }), /일봉과 주봉/);
+  const full = { ...options.data, markets: [{ ...market, results: [row] }] };
+  const result = createCombinedScanExport({ indicator: 'cloud', cloudTarget: 'ma20', savedAt: options.savedAt, datasets: { day: full, week: { ...full, status: 'running', stale: true } } });
+  assert.match(result.filename, /일봉\+주봉.*미완료또는이전자료/);
+  assert.equal(result.sheets[2].rows.find(row => row[0] === '전체 검색 상태')[1], '진행중');
+  assert.match(result.filename, /일완료-주진행중-이전자료/);
+  const staleBoth = createCombinedScanExport({ indicator: 'line-break', savedAt: options.savedAt, datasets: {
+    day: { ...full, status: 'interrupted', stale: true }, week: { ...full, status: 'partial', stale: true } } });
+  assert.match(staleBoth.filename, /일중단-보완중-이전자료-주일부미완료-이전자료/);
 });
 
 test('both scanners/day/week preserve screen text colors by signal, not the sign of a number', () => {

@@ -1,5 +1,6 @@
 import { zipSync, strToU8 } from 'fflate';
 import { SCAN_MARKETS } from './ma200Scan.js';
+import { filterScanResults } from './scanResults.js';
 
 export const SCAN_XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const defaultColors = { text: '1A202C', accent: '1A73E8', muted: '6B7280', up: 'DC2626', down: '1565C0', headerText: '1A202C', headerFill: 'F8F9FB' };
@@ -55,12 +56,18 @@ const colName = index => {
 };
 
 // Use the same filtered matches as the UI, before pagination. No re-fetch or recalculation.
-export function createScanExport({ indicator = 'ma200', interval = 'day', direction = 'all', marketFilter = 'all', search = '', data, matches, colors = {}, savedAt = new Date() }) {
+export function createScanExport({ indicator = 'ma200', interval = 'day', direction = 'all', marketFilter = 'all', search = '', data, matches, colors = {}, savedAt = new Date(), cloudTarget = 'candle', pair = '5-20' }) {
   if (!data || !Array.isArray(data.markets) || !Array.isArray(matches)) throw new Error('검색 자료를 받은 뒤 저장하세요.');
   const lineBreak = indicator === 'line-break';
-  const title = lineBreak ? '7. 삼선전환도 양전환/음전환' : '6. 200이평 돌파/붕괴';
+  const cloud = indicator === 'cloud', cross = indicator === 'ma-cross';
+  const basis = cloudTarget === 'ma20' ? '20이평' : '종가';
+  const up = lineBreak ? '양전환' : cross ? '골든크로스' : '돌파';
+  const down = lineBreak ? '음전환' : cloud ? '하락' : cross ? '데드크로스' : '붕괴';
+  const signalLabel = signal => ['bullish', 'breakout'].includes(signal) ? up : ['bearish', 'breakdown'].includes(signal) ? down : signals[signal] || signal;
+  const title = lineBreak ? '7. 삼선전환도 양전환/음전환' : cloud ? `8. 구름돌파 ${basis} 돌파/하락`
+    : cross ? `9. ${pair.replace('-', '/')} 골든/데드 크로스` : '6. 200이평 돌파/붕괴';
   const timeframe = interval === 'week' ? '주봉' : '일봉';
-  const directionLabel = direction === 'all' ? lineBreak ? '양전환+음전환' : '돌파+붕괴' : signals[direction];
+  const directionLabel = direction === 'all' ? `${up}+${down}` : signalLabel(direction);
   const markets = data.markets.filter(m => marketFilter === 'all' || m.key === marketFilter);
   const refs = markets.map(m => m.reference?.[interval]?.latestDate || m.reference?.[interval]?.latest).filter(Boolean).sort();
   const dateRange = refs.length ? [...new Set([refs[0], refs.at(-1)])].join('~') : '미확정';
@@ -77,7 +84,10 @@ export function createScanExport({ indicator = 'ma200', interval = 'day', direct
     ['선택 시장 대상 수', markets.reduce((sum, m) => sum + (m.total || 0), 0)], ['시장별 최근 거래일 범위', dateRange],
     ['서버 자료 갱신 시각', data.updatedAt ? kst(data.updatedAt) : '자료 없음'], ['기기 다운로드 시각', savedTime],
     ['파일 보관', '접속한 기기에서 생성·다운로드. 엑셀 파일의 서버 저장/업로드 없음.'],
-    ['계산 기준', lineBreak ? '종가 삼선전환도: 최근 전환선 3개의 최고/최저 범위를 넘는 새 방향 전환.' : '각 봉까지의 200개 종가 단순평균과 최근 두 봉 종가의 돌파/붕괴 비교.'],
+    ['계산 기준', lineBreak ? '종가 삼선전환도: 최근 전환선 3개의 최고/최저 범위를 넘는 새 방향 전환.'
+      : cloud ? `${basis}: 이전 값이 당시 구름 안, 최근 값이 당시 구름 밖. 두 봉 모두 선행1=선행2이면 선의 상하 교차도 포함. 9/26/52, 26봉 선행.`
+        : cross ? `${pair.replace('-', '/')} 종가 단순이평: 이전 단기≤장기, 최근 단기>장기면 골든. 반대면 데드. 최근 경계 접촉은 제외.`
+          : '각 봉까지의 200개 종가 단순평균과 최근 두 봉 종가의 돌파/붕괴 비교.'],
     ['주의', '진행 중·중단·일부 미완료 자료는 전체 시장의 완성된 결과가 아닙니다. 장중 신호 및 진행 중 주봉은 바뀔 수 있습니다.'],
     ['날짜/가격', '결과 날짜는 실제 종가 거래일이며 주 시작일과 다를 수 있습니다. 가격은 각 행 통화의 원 단위입니다.'],
     ['조회 오류', data.error || '(없음)'], [],
@@ -91,16 +101,44 @@ export function createScanExport({ indicator = 'ma200', interval = 'day', direct
         m.source || '', m.sourceDate || '', m.error || ''];
     }),
   ];
-  const headers = ['종목명', '종목 코드', '시장', '통화', '구분', '이전 거래일', '최근 거래일', '이전 종가',
-    ...(lineBreak ? ['최근 종가', '이전 방향', '전환 기준가', '기준가 대비'] : ['이전 200이평', '최근 종가', '최근 200이평', '최근 괴리율'])];
+  const headers = ['종목명', '종목 코드', '시장', '통화', '구분', '이전 거래일', '최근 거래일',
+    ...(cloud ? [`이전 ${basis}`, '이전 구름 하단', '이전 구름 상단', `최근 ${basis}`, '최근 구름 하단', '최근 구름 상단', '경계 대비']
+      : cross ? ['이전 단기이평', '이전 장기이평', '최근 단기이평', '최근 장기이평', '이평 괴리율']
+        : ['이전 종가', ...(lineBreak ? ['최근 종가', '이전 방향', '전환 기준가', '기준가 대비'] : ['이전 200이평', '최근 종가', '최근 200이평', '최근 괴리율'])])];
   const results = [headers, ...matches.map(row => [row.name, String(row.symbol ?? ''), row.marketLabel || SCAN_MARKETS[row.market]?.label || row.market,
-    SCAN_MARKETS[row.market]?.currency || '', signals[row.signal] || row.signal, dateCell(row.previous?.date), dateCell(row.latest?.date), num(row.previous?.close),
-    ...(lineBreak ? [num(row.latest?.close), row.previous?.direction === 'up' ? '양선' : row.previous?.direction === 'down' ? '음선' : '', num(row.reversalPrice), percentCell(row.distancePct)]
-      : [num(row.previous?.ma200), num(row.latest?.close), num(row.latest?.ma200), percentCell(row.distancePct)])])];
+    SCAN_MARKETS[row.market]?.currency || '', signalLabel(row.signal), dateCell(row.previous?.date), dateCell(row.latest?.date),
+    ...(cloud ? [num(row.previous?.[cloudTarget === 'ma20' ? 'ma20' : 'close']), num(row.previous?.cloudLow), num(row.previous?.cloudHigh),
+      num(row.latest?.[cloudTarget === 'ma20' ? 'ma20' : 'close']), num(row.latest?.cloudLow), num(row.latest?.cloudHigh), percentCell(row.distancePct)]
+      : cross ? [num(row.previous?.fastMA), num(row.previous?.slowMA), num(row.latest?.fastMA), num(row.latest?.slowMA), percentCell(row.distancePct)]
+        : [num(row.previous?.close), ...(lineBreak ? [num(row.latest?.close), row.previous?.direction === 'up' ? '양선' : row.previous?.direction === 'down' ? '음선' : '', num(row.reversalPrice), percentCell(row.distancePct)]
+          : [num(row.previous?.ma200), num(row.latest?.close), num(row.latest?.ma200), percentCell(row.distancePct)])])])];
   const query = search.trim() ? `_검색-${safeName(Array.from(search.trim()).slice(0, 8).join(''))}` : '';
-  const filename = safeName(`stock5-0_${lineBreak ? '7_삼선' : '6_200이평'}_${timeframe}_${marketFilter === 'all' ? '전체' : marketFilter}_${directionLabel}${query}_기준${dateRange.replace(/-/g, '')}_${status}${data.stale ? '-이전자료' : ''}_${savedTime.replace(/[-: ]/g, '').replace('KST', '')}KST.xlsx`);
+  const filename = safeName(`stock5-0_${lineBreak ? '7_삼선' : cloud ? `8_구름_${basis}` : cross ? `9_크로스_${pair}` : '6_200이평'}_${timeframe}_${marketFilter === 'all' ? '전체' : marketFilter}_${directionLabel}${query}_기준${dateRange.replace(/-/g, '')}_${status}${data.stale ? '-이전자료' : ''}_${savedTime.replace(/[-: ]/g, '').replace('KST', '')}KST.xlsx`);
   return { filename, title, summary, results, resultSignals: matches.map(row => row.signal),
     colors: Object.fromEntries(Object.entries(defaultColors).map(([key, fallback]) => [key, excelColor(colors[key], fallback)])) };
+}
+
+export function createCombinedScanExport({ datasets, ...options }) {
+  if (!datasets?.day || !datasets?.week) throw new Error('일봉과 주봉 검색 자료를 모두 받은 뒤 저장하세요.');
+  const savedAt = options.savedAt || new Date();
+  const models = ['day', 'week'].map(interval => createScanExport({ ...options, savedAt, interval, data: datasets[interval],
+    matches: filterScanResults(datasets[interval], options) }));
+  const warning = ['day', 'week'].some(key => datasets[key].status !== 'done' || datasets[key].stale) ? '_미완료또는이전자료' : '';
+  const dayStatus = statuses[datasets.day.status] || datasets.day.status;
+  const weekStatus = statuses[datasets.week.status] || datasets.week.status;
+  const dayStamp = `${dayStatus}${datasets.day.stale ? '-이전자료' : ''}`;
+  const weekStamp = `${weekStatus}${datasets.week.stale ? '-이전자료' : ''}`;
+  const refs = ['day', 'week'].flatMap(interval => datasets[interval].markets
+    .filter(m => !options.marketFilter || options.marketFilter === 'all' || m.key === options.marketFilter)
+    .map(m => m.reference?.[interval]?.latestDate || m.reference?.[interval]?.latest)).filter(Boolean).sort();
+  const range = refs.length ? [...new Set([refs[0], refs.at(-1)])].join('~').replace(/-/g, '') : '미확정';
+  const filename = models[0].filename.replace('_일봉_', '_일봉+주봉_')
+    .replace(/_기준[^_]+_/, `_기준${range}_`).replace(`_${dayStamp}_`, `_일${dayStamp}-주${weekStamp}_`)
+    .replace('.xlsx', `${warning}.xlsx`);
+  return { ...models[0], filename, sheets: models.flatMap((model, i) => [
+    { name: `${i ? '주봉' : '일봉'} 요약`, rows: model.summary, summary: true },
+    { name: `${i ? '주봉' : '일봉'} 결과`, rows: model.results, resultSignals: model.resultSignals },
+  ]) };
 }
 
 const ns = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
@@ -120,7 +158,7 @@ function worksheet(rows, widths, summary = false, resultSignals = []) {
       const up = ['breakout', 'bullish'].includes(signal);
       const down = ['breakdown', 'bearish'].includes(signal);
       if ((up || down) && j === 4) style = up ? 7 : 8;
-      if ((up || down) && j === 11) style = up ? 9 : 10;
+      if ((up || down) && j === rows[0].length - 1) style = up ? 9 : 10;
     }
     const address = `${colName(j)}${i + 1}`;
     return typeof value === 'number' ? `<c r="${address}" s="${style}"><v>${value}</v></c>`
@@ -137,7 +175,8 @@ function worksheet(rows, widths, summary = false, resultSignals = []) {
 // Genuine OpenXML, zipped by the existing browser dependency. Inline strings
 // preserve leading zeros and keep text starting with '=' literal, not formulas.
 export function buildScanXlsx(model) {
-  const summary = model.summary.map((row, i) => i < 19 ? [row[0], null, null, row[1]] : row);
+  const sheets = model.sheets || [{ name: '저장 요약', rows: model.summary, summary: true },
+    { name: '검색 결과', rows: model.results, resultSignals: model.resultSignals }];
   const colors = model.colors || defaultColors;
   const fonts = [{}, { color: 'FFFFFF', bold: true }, { color: colors.text }, { color: colors.accent, bold: true },
     { color: colors.muted }, { color: colors.up, bold: true }, { color: colors.down, bold: true }, { color: colors.headerText, bold: true }];
@@ -146,10 +185,10 @@ export function buildScanXlsx(model) {
     { font: 3 }, { font: 4 }, { font: 5 }, { font: 6 }, { format: 10, font: 5 }, { format: 10, font: 6 },
     { font: 7, fill: 3, center: true }, { font: 2 }];
   const files = {
-    '[Content_Types].xml': `${declaration}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`,
+    '[Content_Types].xml': `${declaration}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}</Types>`,
     '_rels/.rels': `${declaration}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
-    'xl/workbook.xml': `${declaration}<workbook xmlns="${ns}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets><sheet name="저장 요약" sheetId="1" r:id="rId1"/><sheet name="검색 결과" sheetId="2" r:id="rId2"/></sheets></workbook>`,
-    'xl/_rels/workbook.xml.rels': `${declaration}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`,
+    'xl/workbook.xml': `${declaration}<workbook xmlns="${ns}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets>${sheets.map((sheet, i) => `<sheet name="${xml(sheet.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets></workbook>`,
+    'xl/_rels/workbook.xml.rels': `${declaration}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`,
     'xl/styles.xml': `${declaration}<styleSheet xmlns="${ns}">
       <numFmts count="2"><numFmt numFmtId="164" formatCode="#,##0.00"/><numFmt numFmtId="165" formatCode="yyyy-mm-dd"/></numFmts>
       <fonts count="${fonts.length}">${fonts.map(font => `<font>${font.bold ? '<b/>' : ''}<sz val="11"/>${font.color ? `<color rgb="FF${font.color}"/>` : ''}<name val="Arial"/></font>`).join('')}</fonts>
@@ -157,14 +196,18 @@ export function buildScanXlsx(model) {
       <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
       <cellXfs count="${styles.length}">${styles.map(style => `<xf numFmtId="${style.format || 0}" fontId="${style.font || 0}" fillId="${style.fill || 0}" borderId="0" xfId="0" applyFont="1" applyFill="1" applyNumberFormat="1" applyAlignment="1"><alignment vertical="center"${style.center ? ' horizontal="center"' : ''}${!style.format ? ' wrapText="1"' : ''}/></xf>`).join('')}</cellXfs>
       <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`,
-    'xl/worksheets/sheet1.xml': worksheet(summary, [18, 16, 16, 16, 16, 16, 18, 18, 18, 20, 20, 20, 20, 38, 22, 38], true),
-    'xl/worksheets/sheet2.xml': worksheet(model.results, [38, 20, 24, 10, 14, 18, 18, 20, 20, 20, 20, 18], false, model.resultSignals),
   };
+  sheets.forEach((sheet, i) => {
+    const rows = sheet.summary ? sheet.rows.map((row, index) => index < 19 ? [row[0], null, null, row[1]] : row) : sheet.rows;
+    const widths = sheet.summary ? [18, 16, 16, 16, 16, 16, 18, 18, 18, 20, 20, 20, 20, 38, 22, 38]
+      : sheet.rows[0].map((_, index) => [38, 20, 24, 10, 14, 18, 18][index] || 20);
+    files[`xl/worksheets/sheet${i + 1}.xml`] = worksheet(rows, widths, sheet.summary, sheet.resultSignals);
+  });
   return zipSync(Object.fromEntries(Object.entries(files).map(([name, content]) => [name, strToU8(content)])), { level: 6 });
 }
 
 export function downloadScanXlsx(options) {
-  const model = createScanExport(options);
+  const model = options.datasets ? createCombinedScanExport(options) : createScanExport(options);
   const bytes = buildScanXlsx(model);
   const url = URL.createObjectURL(new Blob([bytes], { type: SCAN_XLSX_MIME }));
   const link = document.createElement('a');
