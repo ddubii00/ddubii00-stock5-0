@@ -1,12 +1,13 @@
 import PositionButtons from './PositionButtons';
 import FundamentalsRow from './FundamentalsRow';
+import { FinancialCells } from './FinancialTable';
 import { useVisibleStock } from '../state/stockResources';
 import { SCAN_MARKETS } from '../utils/ma200Scan';
 import { scanStockLabel } from '../utils/scanTable';
 
 const price = value => Number.isFinite(value) ? value.toLocaleString('ko-KR', { maximumFractionDigits: 2 }) : '—';
 
-export default function ScanResultRow({ row, lineBreak, cloud = false, cross = false, cloudTarget = 'ma20', upSignal, upLabel, downLabel, interval, onOpen }) {
+export default function ScanResultRow({ row, lineBreak, cloud = false, cross = false, cloudTarget = 'ma20', upSignal, upLabel, downLabel, interval, onOpen, financialRecord }) {
   const [ref, visible] = useVisibleStock();
   const signalClass = row.signal === upSignal ? 'scan-up' : 'scan-down';
   return <tr ref={ref}>
@@ -22,6 +23,7 @@ export default function ScanResultRow({ row, lineBreak, cloud = false, cross = f
       : <><td>{price(row.previous.ma200)}</td><td>{price(row.latest.close)}</td><td>{price(row.latest.ma200)}</td></>}
     <td className={signalClass}>{row.distancePct > 0 ? '+' : ''}{row.distancePct.toFixed(2)}%</td>
     <td className="saved-record-cell"><PositionButtons symbol={row.symbol} name={row.name} /></td>
-    <td className="stock-financial-cell"><FundamentalsRow symbol={visible ? row.symbol : null} /></td>
+    {lineBreak || cloud || cross ? <FinancialCells symbol={visible ? row.symbol : null} record={financialRecord} />
+      : <td className="stock-financial-cell"><FundamentalsRow symbol={visible ? row.symbol : null} /></td>}
   </tr>;
 }

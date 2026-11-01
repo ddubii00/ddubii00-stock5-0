@@ -6,6 +6,8 @@ import ScanResultRow from './ScanResultRow';
 import { downloadScanXlsx, readScanExportColors } from '../utils/scanExport';
 import { MA_CROSS_PAIRS } from '../utils/maCrossScan';
 import { filterScanResults } from '../utils/scanResults';
+import { useFinancialSort } from '../state/useFinancialSort';
+import { FinancialColumns, FinancialHeaders, FinancialSortStatus } from './FinancialTable';
 
 const excludedReason = (row, interval, lineBreak, cloud) => row.status === 'short-history'
   ? lineBreak ? `전환선 부족 (${row.availableLines || 0}/3선 · ${row.available}개 ${interval === 'week' ? '주봉' : '일봉'})`
@@ -82,7 +84,10 @@ export default function Ma200Scanner({ showBollinger = false, globalWeekly = fal
   const markets = data?.markets || [];
   const running = ['running', 'interrupted'].includes(data?.status);
   const rows = filterScanResults(data, { marketFilter });
-  const matches = filterScanResults(data, { direction, marketFilter, search });
+  const filteredMatches = filterScanResults(data, { direction, marketFilter, search });
+  const sorting = useFinancialSort(filteredMatches);
+  const sortableFinancials = lineBreak || cloud || cross;
+  const matches = sortableFinancials ? sorting.sortedRows : filteredMatches;
   const pages = Math.max(1, Math.ceil(matches.length / 100));
   const currentPage = Math.min(page, pages);
   const visible = matches.slice((currentPage - 1) * 100, currentPage * 100);
@@ -171,20 +176,22 @@ export default function Ma200Scanner({ showBollinger = false, globalWeekly = fal
         </section>;
       })}
     </div>
+    {sortableFinancials && <FinancialSortStatus sorting={sorting} />}
     <div className="scan-result-caption">조건에 맞는 종목 {matches.length}개
       {pages > 1 && <span><button type="button" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>이전</button> {currentPage}/{pages} <button type="button" disabled={currentPage === pages} onClick={() => setPage(currentPage + 1)}>다음</button></span>}
     </div>
     <div className="scan-table-wrap" role="region" aria-label={cloud ? '구름돌파 검색 결과 표' : lineBreak ? '삼선전환도 검색 결과 표' : cross ? '골든 데드 검색 결과 표' : '200이평 검색 결과 표'} tabIndex={0}><table ref={tableRef} className={`scan-table${cloud ? ' cloud-scan-table' : ''}`}>
       <colgroup><col className="scan-stock-col" /><col className="scan-market-col" /><col className="scan-signal-col" /><col className="scan-date-col" />
         {cloud ? <><col className="scan-price-col" /><col className="cloud-range-col" /><col className="scan-price-col" /><col className="cloud-range-col" /><col className="scan-price-col" /></> : <col span={5} className="scan-price-col" />}
-        <col className="scan-record-col" /><col className="stock-financial-col" /></colgroup>
+        <col className="scan-record-col" />{sortableFinancials ? <FinancialColumns /> : <col className="stock-financial-col" />}</colgroup>
       <thead><tr><th scope="col" className="scan-stock-cell">종목</th><th scope="col">시장 / 통화</th><th scope="col">구분</th><th scope="col">최근 비교일</th>
         {cloud ? <><th scope="col">이전 {basis}</th><th scope="col">이전 구름 하단~상단</th><th scope="col">최근 {basis}</th><th scope="col">최근 구름 하단~상단</th><th scope="col">경계 대비</th></>
           : lineBreak ? <><th scope="col">이전 종가</th><th scope="col">최근 종가</th><th scope="col">이전 방향</th><th scope="col">전환 기준가</th><th scope="col">기준가 대비</th></>
           : cross ? <><th scope="col">이전 {pair.split('-')[0]}이평</th><th scope="col">이전 {pair.split('-')[1]}이평</th><th scope="col">최근 {pair.split('-')[0]}이평</th><th scope="col">최근 {pair.split('-')[1]}이평</th><th scope="col">이평 괴리율</th></>
-          : <><th scope="col">이전 종가</th><th scope="col">이전 200이평</th><th scope="col">최근 종가</th><th scope="col">최근 200이평</th><th scope="col">최근 괴리율</th></>}<th scope="col">롱·숏 / 준비! / 주의!</th><th scope="col">재무정보</th></tr></thead>
+          : <><th scope="col">이전 종가</th><th scope="col">이전 200이평</th><th scope="col">최근 종가</th><th scope="col">최근 200이평</th><th scope="col">최근 괴리율</th></>}<th scope="col">롱·숏 / 준비! / 주의!</th>
+        {sortableFinancials ? <FinancialHeaders sorting={sorting} onSort={metric => { sorting.toggle(metric); setPage(1); }} /> : <th scope="col">재무정보</th>}</tr></thead>
       <tbody>{visible.map(row => <ScanResultRow key={`${row.market}-${row.symbol}`} row={row} lineBreak={lineBreak} cloud={cloud} cross={cross} cloudTarget={cloudTarget}
-        upSignal={upSignal} upLabel={upLabel} downLabel={downLabel} interval={interval} onOpen={setSelectedStock} />)}</tbody>
+        upSignal={upSignal} upLabel={upLabel} downLabel={downLabel} interval={interval} onOpen={setSelectedStock} financialRecord={sorting.records[row.symbol]} />)}</tbody>
     </table></div>
     {matches.length === 0 && <p className="scan-empty">{!data || running ? '검색이 진행되면 조건에 맞는 종목을 이곳에 표시합니다.'
       : data.status !== 'done' ? '현재 발견된 결과가 없습니다. 미완료 시장과 조회 오류를 확인하세요.' : '계산 가능한 종목 중 선택한 조건에 맞는 종목이 없습니다.'}</p>}

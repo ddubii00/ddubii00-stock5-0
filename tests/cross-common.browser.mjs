@@ -29,7 +29,7 @@ async page => {
   await menu.selectOption('common');
   await page.waitForFunction(() => document.querySelector('.scan-progress')?.textContent.includes('공통 조건 검색 완료'), null, { timeout: 30000 });
   check(await rows.count() > 0, 'two-condition common results');
-  await page.getByRole('button', { name: '조건 추가', exact: true }).click();
+  await page.getByLabel('조건 3 지표').selectOption('ma-cross');
   await page.getByLabel('조건 2 구름 기준').selectOption('ma20');
   await page.getByLabel('조건 2 봉 단위').selectOption('week');
   await page.getByLabel('조건 3 이평 조합').selectOption('20-60');

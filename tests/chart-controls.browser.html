@@ -4,6 +4,7 @@
 <title>stock5-0 차트 기능 검증 — 모의 API</title>
 <div id="root"></div>
 <output id="ranking-api-status" hidden></output>
+<output id="financial-api-status" hidden></output>
 <script type="module">
   import React from 'react';
   import { createRoot } from 'react-dom/client';
@@ -12,6 +13,8 @@
   const historyBars = new URL(location.href).searchParams.get('history') === 'short' ? 120 : 2400;
   const rankingRetry = new URL(location.href).searchParams.get('ranking') === 'retry';
   const longNames = new URL(location.href).searchParams.get('names') === 'long';
+  const financialSortTest = new URL(location.href).searchParams.get('financialSort') === '1';
+  const financialStats = { requests: 0, active: 0, maximum: 0 };
   const saveDelay = Math.min(10000, Math.max(0, Number(new URL(location.href).searchParams.get('saveDelay')) || 0));
   const saveFailure = new URL(location.href).searchParams.get('save') === 'fail';
   const rankingStats = { requests: 0, aborted: 0, completed: 0, failed: 0 };
@@ -59,6 +62,20 @@
         roe: .4415, forwardRoe: 1.0318, pbr: 4.57, peg: .01, pegEstimated: true,
         marketCap: 1232e12, revenue: 97.1e12, operatingIncome: 47.2e12,
         currency: 'KRW', source: 'synthetic-test-only', periodType: '연간', period: '2025' };
+      if (financialSortTest) {
+        const symbol = payload.symbol, index = Number(symbol.match(/\d+$/)?.[0] || 0);
+        const offset = symbol.startsWith('KOSPI') ? 0 : symbol.startsWith('KOSDAQ') ? 100 : symbol.startsWith('NASDAQ') ? 200 : 300;
+        const value = index % 10 === 1 ? null : 500 - offset - index;
+        financialStats.requests++; financialStats.active++; financialStats.maximum = Math.max(financialStats.maximum, financialStats.active);
+        document.querySelector('#financial-api-status').textContent = JSON.stringify(financialStats);
+        await delay(35, signal);
+        financialStats.active--;
+        document.querySelector('#financial-api-status').textContent = JSON.stringify(financialStats);
+        Object.assign(payload, { pe: value, forwardPe: value, roe: value === null ? null : value / 1000,
+          forwardRoe: value === null ? null : value / 1000, pbr: value, peg: value,
+          marketCap: value === null ? null : value * 1e10, revenue: value === null ? null : value * 1e10,
+          operatingIncome: value === null ? null : (value - 200) * 1e10 });
+      }
     } else if (url.pathname.endsWith('/top100')) {
       rankingStats.requests += 1;
       reportRanking();

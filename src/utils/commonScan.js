@@ -1,5 +1,7 @@
 import { MA_CROSS_PAIRS } from './maCrossScan.js';
 
+export const activeCommonConditions = conditions => conditions.filter(condition => condition.kind && condition.kind !== '-');
+
 export function validateCommonConditions(conditions) {
   if (!Array.isArray(conditions) || conditions.length < 2 || conditions.length > 8) throw new Error('공통 조건은 2~8개를 선택하세요.');
   return conditions.map(condition => {

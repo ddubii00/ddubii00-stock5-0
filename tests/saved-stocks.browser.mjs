@@ -52,7 +52,7 @@ async (page) => {
   const scanSymbol = await row.locator('.scan-stock-cell small').textContent();
   await page.getByLabel('차트 그룹 선택').selectOption('line-break');
   await page.locator('.scan-table tbody tr').first().waitFor();
-  await page.waitForFunction(() => document.querySelector('.scan-table tbody .fundamentals-row')?.textContent.includes('7.52'));
+  await page.waitForFunction(() => document.querySelector('.scan-table tbody [data-financial-key="pe"]')?.textContent.includes('7.52'));
   const lineRow = page.locator('.scan-table tbody tr').first();
   check((await lineRow.locator('.position-mini-controls button').allTextContents()).join('|') === scannerOrder, 'menu7 restores all status buttons');
   check(await lineRow.locator('td').nth(3).textContent() === '2026-10-08', 'menu7 displays latest date only');
@@ -66,12 +66,12 @@ async (page) => {
   await nvda.waitFor();
   await page.waitForFunction(() => [...document.querySelectorAll('.saved-stock-table tbody tr')].find(row => row.textContent.includes('NVDA'))?.textContent.includes('7.52'));
   check((await nvda.locator('.position-mini-controls button').allTextContents()).join('|') === '준비!|주의!|삭제', 'saved list has delete immediately after caution');
-  check((await page.locator('.saved-stock-table thead tr').first().textContent()) === '종목준비! / 주의! / 삭제재무정보', 'all four indicator columns removed');
+  check(await page.locator('.saved-stock-table thead tr').first().locator('th').count() === 11, 'stock, flags and nine sortable financial columns only');
   const headingColors = await page.locator('.saved-group-title').evaluateAll(nodes => nodes.slice(0,4).map(node => getComputedStyle(node).color));
   check(headingColors.join('|') === 'rgb(220, 38, 38)|rgba(220, 38, 38, 0.65)|rgba(21, 101, 192, 0.65)|rgb(21, 101, 192)', 'group headings distinguish all four record colors');
   check(await nvda.getByRole('button', { name: '준비!', exact: true }).getAttribute('aria-pressed') === 'true', 'ready persisted');
   check(await nvda.getByRole('button', { name: '주의!', exact: true }).getAttribute('aria-pressed') === 'true', 'caution persisted');
-  check((await nvda.locator('.fundamentals-row').textContent()).includes('PEG*0.01'), 'saved stocks financials');
+  check((await nvda.locator('[data-financial-key="peg"]').textContent()).includes('0.01'), 'saved stocks financials');
   check((await page.locator('.saved-stock-table tbody').allTextContents()).some(text => text.includes(scanSymbol)), 'menu6 marking appears in menu8');
   await nvda.getByRole('button', { name: '엔비디아 차트 보기', exact: true }).click();
   await page.locator('.scan-chart-dialog').waitFor();
